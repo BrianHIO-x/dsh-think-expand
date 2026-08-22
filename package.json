@@ -1,0 +1,50 @@
+{
+  "name": "dsh-think-expand",
+  "version": "0.1.0",
+  "description": "Auto-expand every Think row while reasoning is streaming. Leaves tool, context, and compaction disclosures alone.",
+  "type": "module",
+  "license": "MIT",
+  "author": "BrianHIO-x",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/BrianHIO-x/dsh-think-expand.git"
+  },
+  "bugs": {
+    "url": "https://github.com/BrianHIO-x/dsh-think-expand/issues"
+  },
+  "homepage": "https://github.com/BrianHIO-x/dsh-think-expand#readme",
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "dsh",
+    "think",
+    "reasoning"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1"
+  }
+}

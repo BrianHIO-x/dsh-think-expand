@@ -19,6 +19,8 @@ window.__ModuleLoader__.load({
     const THINK_ROW = '[data-variant="think"]'
     const STORAGE_KEY = 'dsh-think-expand.expandAll'
     const listeners = new Set()
+    const userCollapsed = new WeakSet()
+    let suppressingClick = false
 
     function readEnabled() {
       try {
@@ -32,6 +34,21 @@ window.__ModuleLoader__.load({
 
     let enabled = readEnabled()
 
+    function rememberUserToggle(event) {
+      if (suppressingClick) return
+      const target = event.target
+      if (!(target instanceof Element)) return
+      const row = target.closest(THINK_ROW)
+      if (row === null) return
+      const toggle = row.querySelector('[aria-expanded]')
+      if (toggle === null) return
+      if (toggle.getAttribute('aria-expanded') === 'true') {
+        userCollapsed.add(row)
+        return
+      }
+      userCollapsed.delete(row)
+    }
+
     function setEnabled(next) {
       enabled = next
       try {
@@ -44,17 +61,23 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * Open every Think row currently in the page.
-     * Used while the switch is on, including after a session remount.
+     * Open Think rows that the user has not collapsed by hand.
+     * A session remount creates new nodes, so those expand again.
      */
     function syncThinkRows() {
       if (!enabled) return
       const rows = document.querySelectorAll(THINK_ROW)
-      for (const row of rows) {
-        const toggle = row.querySelector('[aria-expanded]')
-        if (toggle === null) continue
-        if (toggle.getAttribute('aria-expanded') === 'true') continue
-        toggle.click()
+      suppressingClick = true
+      try {
+        for (const row of rows) {
+          if (userCollapsed.has(row)) continue
+          const toggle = row.querySelector('[aria-expanded]')
+          if (toggle === null) continue
+          if (toggle.getAttribute('aria-expanded') === 'true') continue
+          toggle.click()
+        }
+      } finally {
+        suppressingClick = false
       }
     }
 
@@ -103,9 +126,13 @@ window.__ModuleLoader__.load({
         observer.observe(document.documentElement, {
           subtree: true,
           childList: true,
-          attributes: true,
-          attributeFilter: ['data-state', 'aria-expanded'],
         })
+        const onUserToggle = (event) => {
+          if (event.type === 'keydown' && event.key !== 'Enter' && event.key !== ' ') return
+          rememberUserToggle(event)
+        }
+        document.addEventListener('click', onUserToggle, true)
+        document.addEventListener('keydown', onUserToggle, true)
         schedule()
 
         const slots = ctx.get('slots')
@@ -122,6 +149,8 @@ window.__ModuleLoader__.load({
 
         return () => {
           observer.disconnect()
+          document.removeEventListener('click', onUserToggle, true)
+          document.removeEventListener('keydown', onUserToggle, true)
           if (frame !== 0) cancelAnimationFrame(frame)
         }
       })

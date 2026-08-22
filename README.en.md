@@ -30,6 +30,7 @@ dsh plugin --profile web remove dsh-think-expand
 
 - Matches the official Think row only (`data-variant="think"`).
 - The session header has a `Think` switch. When it is on, every Think row that is already on screen or appears later expands.
+- A Think row you collapse by hand stays collapsed.
 - Turning the switch off stops further auto-opens. Rows that are already open stay open.
 - The switch is stored in the browser, so it survives a refresh.
 

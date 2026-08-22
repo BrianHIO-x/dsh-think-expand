@@ -2,7 +2,7 @@
 
 [中文](README.md) | [英文](README.en.md)
 
-DeepSeek Harness 的 Web 插件。模型正在输出 Think 时，对话里的全部 Think 行会自动展开。工具卡片、上下文注入、压缩行不会被打开。
+DeepSeek Harness 的 Web 插件。开关打开时，对话里的全部 Think 行会自动展开，包括切换会话之后。工具卡片、上下文注入、压缩行不会被打开。
 
 ## 安装
 
@@ -29,8 +29,9 @@ dsh plugin --profile web remove dsh-think-expand
 ## 行为
 
 - 只匹配官方 Think 行（`data-variant="think"`）。
-- 任意一条 Think 行处于 `data-state="running"` 时，展开全部 Think 行。
-- 思考结束后保持展开。
+- 会话标题栏有一个 `Think` 开关，打开后自动展开当前和之后出现的全部 Think 行。
+- 关掉开关后不再自动点开，已经展开的行不会被收回。
+- 开关状态保存在浏览器本地，刷新后仍然有效。
 
 ## 许可证
 

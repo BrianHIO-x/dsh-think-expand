@@ -2,7 +2,7 @@
 
 [中文](README.md) | [英文](README.en.md)
 
-DeepSeek Harness Web plugin. While the model is writing a Think block, every Think row in the conversation opens. Tool cards, context injections, and compaction rows stay as they are.
+DeepSeek Harness Web plugin. While the switch is on, every Think row in the conversation opens, including after you change sessions. Tool cards, context injections, and compaction rows stay as they are.
 
 ## Install
 
@@ -29,8 +29,9 @@ dsh plugin --profile web remove dsh-think-expand
 ## Behavior
 
 - Matches the official Think row only (`data-variant="think"`).
-- If any Think row is `data-state="running"`, all Think rows expand.
-- After thinking ends they stay open.
+- The session header has a `Think` switch. When it is on, every Think row that is already on screen or appears later expands.
+- Turning the switch off stops further auto-opens. Rows that are already open stay open.
+- The switch is stored in the browser, so it survives a refresh.
 
 ## License
 

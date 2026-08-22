@@ -114,13 +114,18 @@ window.__ModuleLoader__.load({
         style: {
           cursor: 'pointer',
           border: 'none',
-          background: enabled ? 'var(--dsw-alias-interactive-bg-hover)' : 'transparent',
-          color: 'var(--dsw-alias-label-secondary)',
+          background: enabled
+            ? 'var(--dsw-alias-button-primary-fill, #2b6cff)'
+            : 'color-mix(in srgb, var(--dsw-alias-button-primary-fill, #2b6cff) 28%, transparent)',
+          color: enabled
+            ? 'var(--dsw-alias-label-primary-foreground, #fff)'
+            : 'var(--dsw-alias-button-primary-fill, #2b6cff)',
           borderRadius: '8px',
           height: '28px',
-          padding: '0 8px',
+          padding: '0 10px',
           fontSize: '13px',
           lineHeight: '28px',
+          fontWeight: 600,
         },
         children: 'Think',
       })

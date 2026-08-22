@@ -29,9 +29,8 @@ dsh plugin --profile web remove dsh-think-expand
 ## 行为
 
 - 只匹配官方 Think 行（`data-variant="think"`）。
-- 会话标题栏有一个 `Think` 开关，打开后自动展开当前和之后出现的全部 Think 行。
+- 会话标题栏有一个 `Think` 开关：打开展开全部 Think，关掉收起全部 Think。
 - 手动收起某一条后，这条会保持收起，不会再被自动点开。
-- 关掉开关后不再自动点开，已经展开的行不会被收回。
 - 开关状态保存在浏览器本地，刷新后仍然有效。
 
 ## 许可证

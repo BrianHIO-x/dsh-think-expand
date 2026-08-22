@@ -57,7 +57,28 @@ window.__ModuleLoader__.load({
         // Private mode can refuse localStorage; the in-memory flag still works.
       }
       for (const listener of listeners) listener()
-      if (next) syncThinkRows()
+      if (next) {
+        syncThinkRows()
+        return
+      }
+      collapseThinkRows()
+    }
+
+    function clickThinkRows(shouldOpen) {
+      const rows = document.querySelectorAll(THINK_ROW)
+      suppressingClick = true
+      try {
+        for (const row of rows) {
+          if (shouldOpen && userCollapsed.has(row)) continue
+          const toggle = row.querySelector('[aria-expanded]')
+          if (toggle === null) continue
+          const open = toggle.getAttribute('aria-expanded') === 'true'
+          if (open === shouldOpen) continue
+          toggle.click()
+        }
+      } finally {
+        suppressingClick = false
+      }
     }
 
     /**
@@ -66,19 +87,12 @@ window.__ModuleLoader__.load({
      */
     function syncThinkRows() {
       if (!enabled) return
-      const rows = document.querySelectorAll(THINK_ROW)
-      suppressingClick = true
-      try {
-        for (const row of rows) {
-          if (userCollapsed.has(row)) continue
-          const toggle = row.querySelector('[aria-expanded]')
-          if (toggle === null) continue
-          if (toggle.getAttribute('aria-expanded') === 'true') continue
-          toggle.click()
-        }
-      } finally {
-        suppressingClick = false
-      }
+      clickThinkRows(true)
+    }
+
+    /** Close every Think row. Used when the header switch turns off. */
+    function collapseThinkRows() {
+      clickThinkRows(false)
     }
 
     function ExpandToggle() {
@@ -93,7 +107,7 @@ window.__ModuleLoader__.load({
       return jsx('button', {
         type: 'button',
         'aria-pressed': enabled,
-        title: enabled ? '自动展开全部 Think：开' : '自动展开全部 Think：关',
+        title: enabled ? '收起全部 Think' : '展开全部 Think',
         onClick: () => {
           setEnabled(!enabled)
         },

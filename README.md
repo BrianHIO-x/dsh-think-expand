@@ -8,8 +8,6 @@
 
 DeepSeek Harness 的 Web 插件。模型正在输出 Think 时，对话里的全部 Think 行会自动展开。工具卡片、上下文注入、压缩行不会被打开。
 
-这不是 DeepSeek 官方插件。
-
 ### 安装
 
 需要可用的 `dsh` 和 `web` 配置。
@@ -47,8 +45,6 @@ MIT
 ## English
 
 DeepSeek Harness Web plugin. While the model is writing a Think block, every Think row in the conversation opens. Tool cards, context injections, and compaction rows stay as they are.
-
-Not an official DeepSeek plugin.
 
 ### Install
 

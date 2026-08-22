@@ -1,7 +1,7 @@
 {
   "name": "dsh-think-expand",
   "version": "0.1.0",
-  "description": "Auto-expand every Think row, including after switching sessions. Header switch to turn it on or off."
+  "description": "Auto-expand every Think row, including after switching sessions. Header switch to turn it on or off.",
   "type": "module",
   "license": "MIT",
   "author": "BrianHIO-x",

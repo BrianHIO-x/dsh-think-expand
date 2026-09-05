@@ -114,12 +114,8 @@ window.__ModuleLoader__.load({
         style: {
           cursor: 'pointer',
           border: 'none',
-          background: enabled
-            ? 'var(--dsw-alias-button-primary-fill, #2b6cff)'
-            : 'color-mix(in srgb, var(--dsw-alias-button-primary-fill, #2b6cff) 28%, transparent)',
-          color: enabled
-            ? 'var(--dsw-alias-label-primary-foreground, #fff)'
-            : 'var(--dsw-alias-button-primary-fill, #2b6cff)',
+          background: enabled ? '#2b6cff' : 'rgba(43, 108, 255, 0.18)',
+          color: enabled ? '#fff' : '#2b6cff',
           borderRadius: '8px',
           height: '28px',
           padding: '0 10px',
@@ -168,14 +164,6 @@ window.__ModuleLoader__.load({
           {
             name: 'conversation.session.header.actions',
             id: 'think-expand',
-            order: 40,
-          },
-          ExpandToggle,
-        ))
-        ctx.slots.inject('conversation.session.header.utilities', () => ctx.slots.register(
-          {
-            name: 'conversation.session.header.utilities',
-            id: 'think-expand-utility',
             order: 40,
           },
           ExpandToggle,

@@ -131,6 +131,8 @@ window.__ModuleLoader__.load({
       })
     }
 
+    const inject = ['slots']
+
     function apply(ctx) {
       ctx.effect(() => {
         let frame = 0
@@ -153,19 +155,6 @@ window.__ModuleLoader__.load({
         document.addEventListener('click', onUserToggle, true)
         document.addEventListener('keydown', onUserToggle, true)
         schedule()
-
-        const slots = ctx.get('slots')
-        if (slots !== undefined && React !== undefined && jsx !== undefined) {
-          slots.inject('conversation.session.header.actions', () => slots.register(
-            {
-              name: 'conversation.session.header.actions',
-              id: 'think-expand',
-              order: 40,
-            },
-            ExpandToggle,
-          ))
-        }
-
         return () => {
           observer.disconnect()
           document.removeEventListener('click', onUserToggle, true)
@@ -173,9 +162,29 @@ window.__ModuleLoader__.load({
           if (frame !== 0) cancelAnimationFrame(frame)
         }
       })
+
+      if (React !== undefined && jsx !== undefined) {
+        ctx.slots.inject('conversation.session.header.actions', () => ctx.slots.register(
+          {
+            name: 'conversation.session.header.actions',
+            id: 'think-expand',
+            order: 40,
+          },
+          ExpandToggle,
+        ))
+        ctx.slots.inject('conversation.session.header.utilities', () => ctx.slots.register(
+          {
+            name: 'conversation.session.header.utilities',
+            id: 'think-expand-utility',
+            order: 40,
+          },
+          ExpandToggle,
+        ))
+      }
     }
 
     exports.apply = apply
+    exports.inject = inject
     return module.exports
   },
 })

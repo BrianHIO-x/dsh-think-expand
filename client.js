@@ -19,7 +19,7 @@ window.__ModuleLoader__.load({
     const THINK_ROW = '[data-variant="think"]'
     const STORAGE_KEY = 'dsh-think-expand.expandAll'
     const listeners = new Set()
-    const userCollapsed = new WeakSet()
+    let userCollapsed = new WeakSet()
     let suppressingClick = false
 
     function readEnabled() {
@@ -42,6 +42,7 @@ window.__ModuleLoader__.load({
       if (row === null) return
       const toggle = row.querySelector('[aria-expanded]')
       if (toggle === null) return
+      if (!toggle.contains(target)) return
       if (toggle.getAttribute('aria-expanded') === 'true') {
         userCollapsed.add(row)
         return
@@ -50,6 +51,8 @@ window.__ModuleLoader__.load({
     }
 
     function setEnabled(next) {
+      // An explicit bulk action supersedes individual choices from before it.
+      userCollapsed = new WeakSet()
       enabled = next
       try {
         localStorage.setItem(STORAGE_KEY, next ? '1' : '0')

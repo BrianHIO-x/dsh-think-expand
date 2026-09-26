@@ -1,101 +1,29 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
-import vm from 'node:vm'
+import { JSDOM } from 'jsdom'
 
 const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
 
-// Run the shipped module through its public loader and header slot.
+/**
+ * Run the shipped module in jsdom against a small model of the DSH 0.1.7
+ * conversation markup: Think rows, step groups, and whole-turn folds.
+ */
 function setup(initial = '1') {
-  let plugin, Header, observerCallback, observerOptions, cleanup
-  const handlers = new Map()
-  const frames = new Map()
-  const storage = new Map([['dsh-think-expand.expandAll', initial]])
-  const rows = []
-  let frameId = 0
-  class Element {
-    constructor(parent = null) { this.parent = parent }
-    closest(selector) {
-      const matches = selector === '[hidden]'
-        ? node => node.hidden === true
-        : node => rows.includes(node)
-      for (let node = this; node; node = node.parent) {
-        if (matches(node)) return node
-      }
-      return null
-    }
-    contains(target) {
-      for (let node = target; node; node = node.parent) {
-        if (node === this) return true
-      }
-      return false
-    }
-  }
-  const dispatch = (type, target, key) => handlers.get(type)?.({ type, target, key })
-  // A folded turn or step process group, hidden with `hidden="until-found"`.
-  const addGroup = (hidden = true) => {
-    const group = new Element()
-    group.hidden = hidden
-    group.setHidden = (next) => {
-      group.hidden = next
-      observerCallback?.()
-    }
-    return group
-  }
-  const addRow = (open = false, parent = null) => {
-    const row = new Element(parent)
-    const toggle = new Element(row)
-    row.open = open
-    row.toggle = toggle
-    row.body = new Element(row)
-    row.icon = new Element(toggle)
-    row.querySelector = () => toggle
-    toggle.getAttribute = () => String(row.open)
-    toggle.click = () => {
-      dispatch('click', toggle)
-      row.open = !row.open
-      observerCallback?.()
-    }
-    rows.push(row)
-    observerCallback?.()
-    return row
-  }
-  const flush = () => {
-    for (let i = 0; frames.size; i++) {
-      assert.ok(i < 20, 'observer must settle')
-      const pending = [...frames.values()]
-      frames.clear()
-      for (const callback of pending) callback()
-    }
-  }
-  const React = { useState: () => [0, () => {}], useEffect: () => {} }
-  vm.runInNewContext(source, {
-    Element,
-    window: { __ModuleLoader__: { load({ factory }) {
-      plugin = factory((name) => name === 'react'
-        ? React : { jsx: (type, props) => ({ type, props }) })
-    } } },
-    localStorage: {
-      getItem: (key) => storage.get(key) ?? null,
-      setItem: (key, value) => storage.set(key, value),
-    },
-    document: {
-      documentElement: {},
-      querySelectorAll: () => rows,
-      addEventListener: (type, handler) => handlers.set(type, handler),
-      removeEventListener: (type) => handlers.delete(type),
-    },
-    MutationObserver: class {
-      constructor(callback) { observerCallback = callback }
-      observe(target, options) { observerOptions = options }
-      disconnect() {}
-    },
-    requestAnimationFrame(callback) {
-      frames.set(++frameId, callback)
-      return frameId
-    },
-    cancelAnimationFrame: (id) => frames.delete(id),
-  })
+  const dom = new JSDOM('<!doctype html><body></body>', { url: 'http://localhost/', runScripts: 'outside-only' })
+  const { window } = dom
+  const { document } = window
+  window.localStorage.setItem('dsh-think-expand.expandAll', initial)
+  const frames = []
+  window.requestAnimationFrame = (callback) => frames.push(callback)
+  window.cancelAnimationFrame = () => {}
+  let plugin, Header, cleanup
+  window.__ModuleLoader__ = { load({ factory }) {
+    plugin = factory((name) => name === 'react'
+      ? { useState: () => [0, () => {}], useEffect: () => {} }
+      : { jsx: (type, props) => ({ type, props }) })
+  } }
+  window.eval(source)
   plugin.apply({
     effect(callback) { cleanup = callback() },
     slots: {
@@ -103,121 +31,278 @@ function setup(initial = '1') {
       register(options, component) { Header = component },
     },
   })
-  const bulk = () => { Header().props.onClick(); flush() }
+  let nextId = 0
+  const focused = []
+
+  const el = (tag, attrs = {}, parent = document.body) => {
+    const node = document.createElement(tag)
+    for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, value)
+    parent.append(node)
+    return node
+  }
+  const hide = (node, hidden) => {
+    if (hidden) node.setAttribute('hidden', 'until-found')
+    else node.removeAttribute('hidden')
+  }
+
+  /** ReasoningRow + DisclosureRow with `expandOnRowClick`. */
+  const think = (parent = document.body) => {
+    const root = el('div', { 'data-variant': 'think' }, parent)
+    const toggle = el('div', { 'data-disclosure-row': '', role: 'button', tabindex: '0', 'aria-expanded': 'false' }, root)
+    const icon = el('span', {}, toggle)
+    let body = null
+    const set = (open) => {
+      toggle.setAttribute('aria-expanded', String(open))
+      if (open && body === null) body = el('div', { class: 'thinkBody' }, root)
+      if (!open && body !== null) { body.remove(); body = null }
+    }
+    toggle.addEventListener('click', () => set(toggle.getAttribute('aria-expanded') !== 'true'))
+    return {
+      root, toggle, icon, reset: () => set(false),
+      get open() { return toggle.getAttribute('aria-expanded') === 'true' },
+      get body() { return body },
+    }
+  }
+
+  /** ChatGroupSeat: header button controlling a searchable-hidden body. */
+  const group = (parent = document.body, turn) => {
+    const root = el('div', { 'data-step-process': '', ...(turn === undefined ? {} : { 'data-chat-turn': String(turn) }) }, parent)
+    const id = `:r${nextId++}:`
+    const header = el('button', { type: 'button', 'aria-expanded': 'false', 'aria-controls': id }, el('div', {}, root))
+    const body = el('div', { id, 'data-step-process-body': '', hidden: 'until-found' }, root)
+    const content = el('div', { 'data-step-process-content': '' }, body)
+    const set = (open) => {
+      header.setAttribute('aria-expanded', String(open))
+      hide(body, !open)
+    }
+    header.addEventListener('click', (event) => {
+      event.currentTarget.focus()
+      if (document.activeElement === header) focused.push(header)
+      set(header.getAttribute('aria-expanded') !== 'true')
+    })
+    return {
+      root, header, content, set,
+      get open() { return header.getAttribute('aria-expanded') === 'true' },
+    }
+  }
+
+  /**
+   * TurnProcessNodeView plus the process members it folds. Folding hides each
+   * member, closes its groups, and resets its Think rows like the host does.
+   */
+  const turn = (number, open = false) => {
+    const button = el('button', { type: 'button', 'data-turn-process': String(number), 'aria-expanded': String(open) })
+    const members = []
+    const set = (next) => {
+      button.setAttribute('aria-expanded', String(next))
+      for (const member of members) {
+        hide(member.wrapper, !next)
+        if (next) continue
+        member.group?.set(false)
+        for (const row of member.rows) row.reset()
+      }
+    }
+    button.addEventListener('click', (event) => {
+      event.currentTarget.focus()
+      if (document.activeElement === button) focused.push(button)
+      set(button.getAttribute('aria-expanded') !== 'true')
+    })
+    const member = () => {
+      const wrapper = el('div', { 'data-chat-turn': String(number), 'data-turn-process-member': '' })
+      hide(wrapper, button.getAttribute('aria-expanded') !== 'true')
+      const entry = { wrapper, rows: [], group: undefined }
+      members.push(entry)
+      return entry
+    }
+    return {
+      button, set,
+      get open() { return button.getAttribute('aria-expanded') === 'true' },
+      /** A Think row directly in a process member. */
+      think() { const entry = member(); const row = think(entry.wrapper); entry.rows.push(row); return row },
+      /** A step group in a process member, filled with Think rows. */
+      group(count = 1) {
+        const entry = member()
+        entry.group = group(entry.wrapper)
+        const rows = Array.from({ length: count }, () => think(entry.group.content))
+        entry.rows.push(...rows)
+        return { ...entry.group, rows, get open() { return entry.group.open } }
+      },
+    }
+  }
+
+  const flush = async () => {
+    for (let i = 0; ; i++) {
+      assert.ok(i < 30, 'observer must settle')
+      await new Promise(resolve => setTimeout(resolve, 0))
+      if (frames.length === 0) return
+      for (const callback of frames.splice(0)) callback()
+    }
+  }
+  const bulk = async () => { Header().props.onClick(); await flush() }
+  const click = (node) => node.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+  const key = (node) => node.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+
   return {
-    addRow, addGroup, flush, bulk, dispatch,
-    cleanup: () => cleanup(), observerOptions: () => observerOptions, rows, storage,
+    window, document, think, group, turn, flush, bulk, click, key, focused,
+    cleanup: () => cleanup(), storage: window.localStorage,
   }
 }
 
-test('bulk switch reopens manually collapsed rows across repeated cycles', () => {
+test('bulk switch reopens manually collapsed rows across repeated cycles', async () => {
   const app = setup()
-  const first = app.addRow()
-  const second = app.addRow()
-  app.flush()
-  assert.deepEqual(app.rows.map(row => row.open), [true, true])
+  const first = app.think()
+  const second = app.think()
+  await app.flush()
+  assert.deepEqual([first.open, second.open], [true, true])
   for (let i = 0; i < 3; i++) {
     first.toggle.click()
-    app.flush()
+    await app.flush()
     assert.equal(first.open, false)
     assert.equal(second.open, true)
-    app.bulk()
-    assert.deepEqual(app.rows.map(row => row.open), [false, false])
-    app.bulk()
-    assert.deepEqual(app.rows.map(row => row.open), [true, true])
+    await app.bulk()
+    assert.deepEqual([first.open, second.open], [false, false])
+    await app.bulk()
+    assert.deepEqual([first.open, second.open], [true, true])
   }
   app.cleanup()
 })
 
-test('bulk collapse includes rows manually opened while disabled', () => {
+test('bulk collapse includes rows manually opened while disabled', async () => {
   const app = setup('0')
-  const row = app.addRow()
-  app.flush()
+  const row = app.think()
+  await app.flush()
   assert.equal(row.open, false)
   row.toggle.click()
-  app.flush()
+  await app.flush()
   assert.equal(row.open, true)
-  app.bulk()
-  app.bulk()
+  await app.bulk()
+  await app.bulk()
   assert.equal(row.open, false)
-  assert.equal(app.storage.get('dsh-think-expand.expandAll'), '0')
+  assert.equal(app.storage.getItem('dsh-think-expand.expandAll'), '0')
 })
 
-test('body clicks and body keyboard events do not record a manual collapse', () => {
-  for (const type of ['click', 'keydown']) {
+test('body clicks and body keyboard events do not record a manual collapse', async () => {
+  for (const send of ['click', 'key']) {
     const app = setup()
-    const row = app.addRow()
-    app.flush()
-    app.dispatch(type, row.body, 'Enter')
-    // Simulate the host replacing the disclosure content in this row.
-    row.open = false
-    app.addRow()
-    app.flush()
+    const row = app.think()
+    await app.flush()
+    app[send](row.body)
+    // Simulate the host resetting this row in place.
+    row.reset()
+    await app.flush()
     assert.equal(row.open, true)
   }
 })
 
-test('nested toggle targets and keyboard activation retain manual intent until bulk action', () => {
-  for (const type of ['click', 'keydown']) {
+test('nested toggle targets and keyboard activation retain manual intent until bulk action', async () => {
+  for (const send of ['click', 'key']) {
     const app = setup()
-    const row = app.addRow()
-    app.flush()
-    app.dispatch(type, row.icon, 'Enter')
-    row.open = false
-    const newRow = app.addRow()
-    app.flush()
+    const row = app.think()
+    await app.flush()
+    app[send](row.icon)
+    row.reset()
+    const newRow = app.think()
+    await app.flush()
     assert.equal(row.open, false)
     assert.equal(newRow.open, true)
-    app.bulk()
-    app.bulk()
+    await app.bulk()
+    await app.bulk()
     assert.equal(row.open, true)
   }
 })
 
-test('rows in a folded process group open once the group is revealed', () => {
+test('opens step groups holding Think rows and leaves other groups closed', async () => {
   const app = setup()
-  const group = app.addGroup()
-  const hidden = app.addRow(false, group)
-  const visible = app.addRow()
-  app.flush()
-  assert.equal(hidden.open, false)
-  assert.equal(visible.open, true)
-  assert.deepEqual([...app.observerOptions().attributeFilter], ['hidden'])
-  group.setHidden(false)
-  app.flush()
-  assert.equal(hidden.open, true)
+  const withThink = app.group()
+  const row = app.think(withThink.content)
+  const toolsOnly = app.group()
+  await app.flush()
+  assert.equal(withThink.open, true)
+  assert.equal(row.open, true)
+  assert.equal(toolsOnly.open, false)
 })
 
-test('a row reset by its folding turn reopens when the turn unfolds', () => {
+test('opens a folded turn, then the groups inside it, then their Think rows', async () => {
   const app = setup()
-  const group = app.addGroup(false)
-  const row = app.addRow(false, group)
-  app.flush()
-  assert.equal(row.open, true)
-  // DSH 0.1.7 hides the process member and resets its disclosure in place.
-  group.hidden = true
-  row.open = false
-  group.setHidden(true)
-  app.flush()
-  assert.equal(row.open, false)
-  group.setHidden(false)
-  app.flush()
-  assert.equal(row.open, true)
+  const turn = app.turn(3)
+  const grouped = turn.group(2)
+  const direct = turn.think()
+  await app.flush()
+  assert.equal(turn.open, true)
+  assert.equal(grouped.open, true)
+  assert.deepEqual(grouped.rows.map(row => row.open), [true, true])
+  assert.equal(direct.open, true)
 })
 
-test('bulk collapse also closes rows inside a hidden group', () => {
+test('reopens a turn the host folds when it finishes', async () => {
   const app = setup()
-  const group = app.addGroup(false)
-  const row = app.addRow(false, group)
-  app.flush()
+  const turn = app.turn(1, true)
+  const grouped = turn.group()
+  await app.flush()
+  assert.equal(grouped.rows[0].open, true)
+  turn.set(false)
+  await app.flush()
+  assert.equal(turn.open, true)
+  assert.equal(grouped.open, true)
+  assert.equal(grouped.rows[0].open, true)
+})
+
+test('opening groups and turns never moves focus', async () => {
+  const app = setup()
+  const turn = app.turn(2)
+  turn.group()
+  await app.flush()
+  assert.equal(turn.open, true)
+  assert.deepEqual(app.focused, [])
+})
+
+test('groups and turns the user closes stay closed until the next bulk action', async () => {
+  const app = setup()
+  const turn = app.turn(5)
+  const grouped = turn.group()
+  const other = app.group()
+  app.think(other.content)
+  await app.flush()
+  assert.equal(grouped.open, true)
+  app.click(other.header)
+  await app.flush()
+  assert.equal(other.open, false)
+  app.click(turn.button)
+  await app.flush()
+  assert.equal(turn.open, false)
+  await app.bulk()
+  await app.bulk()
+  assert.equal(turn.open, true)
+  assert.equal(grouped.open, true)
+  assert.equal(other.open, true)
+})
+
+test('switching off collapses Think rows and refolds only what the plugin opened', async () => {
+  const app = setup()
+  const turn = app.turn(4)
+  const grouped = turn.group()
+  const mine = app.group()
+  mine.set(true)
+  const row = app.think(mine.content)
+  await app.flush()
+  assert.equal(turn.open, true)
   assert.equal(row.open, true)
-  group.setHidden(true)
-  app.flush()
-  app.bulk()
+  await app.bulk()
   assert.equal(row.open, false)
-  group.setHidden(false)
-  app.flush()
-  assert.equal(row.open, false)
-  app.bulk()
-  assert.equal(row.open, true)
+  assert.equal(grouped.rows[0].open, false)
+  assert.equal(grouped.open, false)
+  assert.equal(turn.open, false)
+  assert.equal(mine.open, true)
+  assert.deepEqual(app.focused, [])
+})
+
+test('does nothing to folds while switched off', async () => {
+  const app = setup('0')
+  const turn = app.turn(6)
+  turn.group()
+  const loose = app.group()
+  app.think(loose.content)
+  await app.flush()
+  assert.equal(turn.open, false)
+  assert.equal(loose.open, false)
 })

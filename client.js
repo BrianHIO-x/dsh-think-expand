@@ -19,11 +19,22 @@ window.__ModuleLoader__.load({
     const THINK_ROW = '[data-variant="think"]'
     /** DSH 0.1.7 marks the Think header itself; older builds only set aria-expanded. */
     const THINK_TOGGLE = '[data-disclosure-row][aria-expanded]'
-    /** Folded turn and step process groups use `hidden="until-found"`. */
+    /** Folded turn processes and step groups use `hidden="until-found"`. */
     const HIDDEN = '[hidden]'
+    /** Step group root, its collapsible body, and the header button that controls it. */
+    const STEP_GROUP = '[data-step-process]'
+    const STEP_BODY = '[data-step-process-body]'
+    const STEP_HEADER = 'button[aria-controls]'
+    /** Whole-turn fold control; `data-turn-process` holds the turn number. */
+    const TURN_PROCESS = 'button[data-turn-process]'
+    const TURN_OWNER = '[data-chat-turn]'
     const STORAGE_KEY = 'dsh-think-expand.expandAll'
     const listeners = new Set()
     let userCollapsed = new WeakSet()
+    /** Group and turn controls the user closed by hand since the last bulk action. */
+    let userClosed = new WeakSet()
+    /** Group and turn controls this plugin opened, closed again by the off switch. */
+    let autoOpened = new Set()
     let suppressingClick = false
 
     function readEnabled() {
@@ -42,6 +53,10 @@ window.__ModuleLoader__.load({
       return row.querySelector(THINK_TOGGLE) ?? row.querySelector('[aria-expanded]')
     }
 
+    function isOpen(control) {
+      return control.getAttribute('aria-expanded') === 'true'
+    }
+
     function rememberUserToggle(event) {
       if (suppressingClick) return
       const target = event.target
@@ -51,16 +66,88 @@ window.__ModuleLoader__.load({
       const toggle = toggleOf(row)
       if (toggle === null) return
       if (!toggle.contains(target)) return
-      if (toggle.getAttribute('aria-expanded') === 'true') {
+      if (isOpen(toggle)) {
         userCollapsed.add(row)
         return
       }
       userCollapsed.delete(row)
     }
 
+    /** Native buttons turn Enter and Space into clicks, so clicks cover the keyboard too. */
+    function rememberUserFold(event) {
+      if (suppressingClick) return
+      const target = event.target
+      if (!(target instanceof Element)) return
+      const turn = target.closest(TURN_PROCESS)
+      const header = turn ?? stepHeaderAt(target)
+      if (header === null) return
+      if (isOpen(header)) {
+        userClosed.add(header)
+        return
+      }
+      userClosed.delete(header)
+    }
+
+    function stepHeaderAt(target) {
+      const header = target.closest(STEP_HEADER)
+      if (header === null) return null
+      const group = header.closest(STEP_GROUP)
+      if (group === null) return null
+      return stepHeaderOf(group) === header ? header : null
+    }
+
+    function stepHeaderOf(group) {
+      const body = group.querySelector(STEP_BODY)
+      if (body === null) return null
+      for (const header of group.querySelectorAll(STEP_HEADER)) {
+        if (header.getAttribute('aria-controls') === body.id) return header
+      }
+      return null
+    }
+
+    function outermostHidden(row) {
+      let outer = null
+      for (let node = row.closest(HIDDEN); node !== null; node = node.parentElement?.closest(HIDDEN) ?? null) {
+        outer = node
+      }
+      return outer
+    }
+
+    /**
+     * The control that reveals one hidden subtree: the step group header for a
+     * folded group body, otherwise the fold button of the owning turn.
+     */
+    function revealerOf(hidden) {
+      if (hidden.matches(STEP_BODY)) {
+        const group = hidden.closest(STEP_GROUP)
+        return group === null ? null : stepHeaderOf(group)
+      }
+      const owner = hidden.closest(TURN_OWNER)
+      if (owner === null) return null
+      const turn = owner.getAttribute('data-chat-turn')
+      for (const button of document.querySelectorAll(TURN_PROCESS)) {
+        if (button.getAttribute('data-turn-process') === turn && !button.disabled && !isOpen(button)) return button
+      }
+      return null
+    }
+
+    /**
+     * Click a host control without letting it move focus. Group and turn
+     * headers focus themselves on click, which would scroll the conversation.
+     */
+    function quietClick(control) {
+      control.focus = () => {}
+      try {
+        control.click()
+      } finally {
+        delete control.focus
+      }
+    }
+
     function setEnabled(next) {
       // An explicit bulk action supersedes individual choices from before it.
       userCollapsed = new WeakSet()
+      userClosed = new WeakSet()
       enabled = next
       try {
         localStorage.setItem(STORAGE_KEY, next ? '1' : '0')
@@ -75,21 +162,33 @@ window.__ModuleLoader__.load({
       collapseThinkRows()
     }
 
-    function clickThinkRows(shouldOpen) {
-      const rows = document.querySelectorAll(THINK_ROW)
+    /**
+     * Open visible Think rows that the user has not collapsed by hand, and
+     * reveal the folded group or turn around each hidden one. Revealing
+     * re-renders the host, and the next pass opens the rows it uncovered.
+     * A session remount creates new nodes, so those expand again.
+     */
+    function syncThinkRows() {
+      if (!enabled) return
+      const revealers = new Set()
       suppressingClick = true
       try {
-        for (const row of rows) {
-          if (shouldOpen && userCollapsed.has(row)) continue
-          // A hidden row opens once its process group is revealed. The host
-          // also resets it to collapsed when its turn folds, so opening it
-          // while hidden would only render the reasoning off screen.
-          if (shouldOpen && row.closest(HIDDEN) !== null) continue
+        for (const row of document.querySelectorAll(THINK_ROW)) {
+          if (userCollapsed.has(row)) continue
+          const hidden = outermostHidden(row)
+          if (hidden !== null) {
+            const revealer = revealerOf(hidden)
+            if (revealer !== null) revealers.add(revealer)
+            continue
+          }
           const toggle = toggleOf(row)
-          if (toggle === null) continue
-          const open = toggle.getAttribute('aria-expanded') === 'true'
-          if (open === shouldOpen) continue
+          if (toggle === null || isOpen(toggle)) continue
           toggle.click()
+        }
+        for (const revealer of revealers) {
+          if (userClosed.has(revealer) || isOpen(revealer)) continue
+          autoOpened.add(revealer)
+          quietClick(revealer)
         }
       } finally {
         suppressingClick = false
@@ -97,17 +196,25 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * Open visible Think rows that the user has not collapsed by hand.
-     * A session remount creates new nodes, so those expand again.
+     * Close every Think row, hidden ones included, then fold the groups and
+     * turns this plugin opened. Used when the header switch turns off.
      */
-    function syncThinkRows() {
-      if (!enabled) return
-      clickThinkRows(true)
-    }
-
-    /** Close every Think row, hidden ones included. Used when the header switch turns off. */
     function collapseThinkRows() {
-      clickThinkRows(false)
+      const opened = autoOpened
+      autoOpened = new Set()
+      suppressingClick = true
+      try {
+        for (const row of document.querySelectorAll(THINK_ROW)) {
+          const toggle = toggleOf(row)
+          if (toggle !== null && isOpen(toggle)) toggle.click()
+        }
+        // Inner groups first, so a turn folds over groups that are already closed.
+        for (const control of [...opened].reverse()) {
+          if (control.isConnected && !control.disabled && isOpen(control)) quietClick(control)
+        }
+      } finally {
+        suppressingClick = false
+      }
     }
 
     function ExpandToggle() {
@@ -165,6 +272,7 @@ window.__ModuleLoader__.load({
         const onUserToggle = (event) => {
           if (event.type === 'keydown' && event.key !== 'Enter' && event.key !== ' ') return
           rememberUserToggle(event)
+          if (event.type === 'click') rememberUserFold(event)
         }
         document.addEventListener('click', onUserToggle, true)
         document.addEventListener('keydown', onUserToggle, true)

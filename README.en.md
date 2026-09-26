@@ -6,7 +6,7 @@ DeepSeek Harness Web plugin. While the switch is on, every Think row in the conv
 
 ## Install
 
-Needs a working `dsh` and the `web` profile.
+Needs `dsh` 0.1.7-rc.2 or later and the `web` profile.
 
 ```sh
 dsh plugin --profile web add github:BrianHIO-x/dsh-think-expand
@@ -31,6 +31,7 @@ dsh plugin --profile web remove dsh-think-expand
 - Matches the official Think row only (`data-variant="think"`).
 - The session header has a `Think` switch. On expands every Think row; off collapses them all.
 - A Think row you collapse by hand stays collapsed until you use the header switch again. Each header action clears previous manual choices and applies to every Think row.
+- Think rows inside a folded turn process or step group open when you expand that group. DSH 0.1.7 resets them to collapsed when the turn folds; the plugin opens them again once you unfold it, except rows you collapsed by hand.
 - The switch is stored in the browser, so it survives a refresh.
 
 ## License

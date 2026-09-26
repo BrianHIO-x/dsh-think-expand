@@ -17,6 +17,10 @@ window.__ModuleLoader__.load({
 
     /** Official Think row root. Other disclosures use different variants. */
     const THINK_ROW = '[data-variant="think"]'
+    /** DSH 0.1.7 marks the Think header itself; older builds only set aria-expanded. */
+    const THINK_TOGGLE = '[data-disclosure-row][aria-expanded]'
+    /** Folded turn and step process groups use `hidden="until-found"`. */
+    const HIDDEN = '[hidden]'
     const STORAGE_KEY = 'dsh-think-expand.expandAll'
     const listeners = new Set()
     let userCollapsed = new WeakSet()
@@ -34,13 +38,17 @@ window.__ModuleLoader__.load({
 
     let enabled = readEnabled()
 
+    function toggleOf(row) {
+      return row.querySelector(THINK_TOGGLE) ?? row.querySelector('[aria-expanded]')
+    }
+
     function rememberUserToggle(event) {
       if (suppressingClick) return
       const target = event.target
       if (!(target instanceof Element)) return
       const row = target.closest(THINK_ROW)
       if (row === null) return
-      const toggle = row.querySelector('[aria-expanded]')
+      const toggle = toggleOf(row)
       if (toggle === null) return
       if (!toggle.contains(target)) return
       if (toggle.getAttribute('aria-expanded') === 'true') {
@@ -73,7 +81,11 @@ window.__ModuleLoader__.load({
       try {
         for (const row of rows) {
           if (shouldOpen && userCollapsed.has(row)) continue
-          const toggle = row.querySelector('[aria-expanded]')
+          // A hidden row opens once its process group is revealed. The host
+          // also resets it to collapsed when its turn folds, so opening it
+          // while hidden would only render the reasoning off screen.
+          if (shouldOpen && row.closest(HIDDEN) !== null) continue
+          const toggle = toggleOf(row)
           if (toggle === null) continue
           const open = toggle.getAttribute('aria-expanded') === 'true'
           if (open === shouldOpen) continue
@@ -85,7 +97,7 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * Open Think rows that the user has not collapsed by hand.
+     * Open visible Think rows that the user has not collapsed by hand.
      * A session remount creates new nodes, so those expand again.
      */
     function syncThinkRows() {
@@ -93,7 +105,7 @@ window.__ModuleLoader__.load({
       clickThinkRows(true)
     }
 
-    /** Close every Think row. Used when the header switch turns off. */
+    /** Close every Think row, hidden ones included. Used when the header switch turns off. */
     function collapseThinkRows() {
       clickThinkRows(false)
     }
@@ -146,6 +158,9 @@ window.__ModuleLoader__.load({
         observer.observe(document.documentElement, {
           subtree: true,
           childList: true,
+          // Expanding a folded turn or step group only removes `hidden`.
+          attributes: true,
+          attributeFilter: ['hidden'],
         })
         const onUserToggle = (event) => {
           if (event.type === 'keydown' && event.key !== 'Enter' && event.key !== ' ') return

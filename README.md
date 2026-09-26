@@ -6,7 +6,7 @@ DeepSeek Harness 的 Web 插件。开关打开时，对话里的全部 Think 行
 
 ## 安装
 
-需要可用的 `dsh` 和 `web` 配置。
+需要 `dsh` 0.1.7-rc.2 或更新版本，以及 `web` 配置。
 
 ```sh
 dsh plugin --profile web add github:BrianHIO-x/dsh-think-expand
@@ -31,6 +31,7 @@ dsh plugin --profile web remove dsh-think-expand
 - 只匹配官方 Think 行（`data-variant="think"`）。
 - 会话标题栏有一个 `Think` 开关：打开展开全部 Think，关掉收起全部 Think。
 - 手动收起某一条后，这条会保持收起；再次操作标题栏总开关时，所有 Think 行统一按开关状态展开或收起，之前的手动记录随之清除。
+- 折叠起来的轮次过程或步骤分组里的 Think 行，要等你展开这个分组才会打开。DSH 0.1.7 在轮次折叠时会把其中的 Think 行重置为收起，重新展开这一轮后，插件会再次把它们打开（手动收起过的除外）。
 - 开关状态保存在浏览器本地，刷新后仍然有效。
 
 ## 许可证

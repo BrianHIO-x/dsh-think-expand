@@ -1,6 +1,6 @@
 {
   "name": "dsh-think-expand",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "scripts": {
     "test": "node --test"
   },
@@ -25,7 +25,7 @@
   ],
   "engines": {
     "node": ">=20",
-    "dsh": ">=0.1.2-rc.1"
+    "dsh": ">=0.1.7-rc.2"
   },
   "main": "index.js",
   "exports": {
@@ -53,6 +53,6 @@
     }
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "^4.0.1"
+    "@deepseek-ai/cordis": "^4.0.4"
   }
 }

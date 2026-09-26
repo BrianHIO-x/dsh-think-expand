@@ -7,7 +7,7 @@ const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
 
 // Run the shipped module through its public loader and header slot.
 function setup(initial = '1') {
-  let plugin, Header, observerCallback, cleanup
+  let plugin, Header, observerCallback, observerOptions, cleanup
   const handlers = new Map()
   const frames = new Map()
   const storage = new Map([['dsh-think-expand.expandAll', initial]])
@@ -15,9 +15,12 @@ function setup(initial = '1') {
   let frameId = 0
   class Element {
     constructor(parent = null) { this.parent = parent }
-    closest() {
+    closest(selector) {
+      const matches = selector === '[hidden]'
+        ? node => node.hidden === true
+        : node => rows.includes(node)
       for (let node = this; node; node = node.parent) {
-        if (rows.includes(node)) return node
+        if (matches(node)) return node
       }
       return null
     }
@@ -29,8 +32,18 @@ function setup(initial = '1') {
     }
   }
   const dispatch = (type, target, key) => handlers.get(type)?.({ type, target, key })
-  const addRow = (open = false) => {
-    const row = new Element()
+  // A folded turn or step process group, hidden with `hidden="until-found"`.
+  const addGroup = (hidden = true) => {
+    const group = new Element()
+    group.hidden = hidden
+    group.setHidden = (next) => {
+      group.hidden = next
+      observerCallback?.()
+    }
+    return group
+  }
+  const addRow = (open = false, parent = null) => {
+    const row = new Element(parent)
     const toggle = new Element(row)
     row.open = open
     row.toggle = toggle
@@ -74,7 +87,7 @@ function setup(initial = '1') {
     },
     MutationObserver: class {
       constructor(callback) { observerCallback = callback }
-      observe() {}
+      observe(target, options) { observerOptions = options }
       disconnect() {}
     },
     requestAnimationFrame(callback) {
@@ -91,7 +104,10 @@ function setup(initial = '1') {
     },
   })
   const bulk = () => { Header().props.onClick(); flush() }
-  return { addRow, flush, bulk, dispatch, cleanup: () => cleanup(), rows, storage }
+  return {
+    addRow, addGroup, flush, bulk, dispatch,
+    cleanup: () => cleanup(), observerOptions: () => observerOptions, rows, storage,
+  }
 }
 
 test('bulk switch reopens manually collapsed rows across repeated cycles', () => {
@@ -156,4 +172,52 @@ test('nested toggle targets and keyboard activation retain manual intent until b
     app.bulk()
     assert.equal(row.open, true)
   }
+})
+
+test('rows in a folded process group open once the group is revealed', () => {
+  const app = setup()
+  const group = app.addGroup()
+  const hidden = app.addRow(false, group)
+  const visible = app.addRow()
+  app.flush()
+  assert.equal(hidden.open, false)
+  assert.equal(visible.open, true)
+  assert.deepEqual([...app.observerOptions().attributeFilter], ['hidden'])
+  group.setHidden(false)
+  app.flush()
+  assert.equal(hidden.open, true)
+})
+
+test('a row reset by its folding turn reopens when the turn unfolds', () => {
+  const app = setup()
+  const group = app.addGroup(false)
+  const row = app.addRow(false, group)
+  app.flush()
+  assert.equal(row.open, true)
+  // DSH 0.1.7 hides the process member and resets its disclosure in place.
+  group.hidden = true
+  row.open = false
+  group.setHidden(true)
+  app.flush()
+  assert.equal(row.open, false)
+  group.setHidden(false)
+  app.flush()
+  assert.equal(row.open, true)
+})
+
+test('bulk collapse also closes rows inside a hidden group', () => {
+  const app = setup()
+  const group = app.addGroup(false)
+  const row = app.addRow(false, group)
+  app.flush()
+  assert.equal(row.open, true)
+  group.setHidden(true)
+  app.flush()
+  app.bulk()
+  assert.equal(row.open, false)
+  group.setHidden(false)
+  app.flush()
+  assert.equal(row.open, false)
+  app.bulk()
+  assert.equal(row.open, true)
 })

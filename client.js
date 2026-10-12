@@ -29,13 +29,27 @@ window.__ModuleLoader__.load({
     const TURN_PROCESS = 'button[data-turn-process]'
     const TURN_OWNER = '[data-chat-turn]'
     const STORAGE_KEY = 'dsh-think-expand.expandAll'
+    /**
+     * Fold animations hold clicks for about 200 ms: skins such as
+     * dsh-claude-style swallow every chat click while a fold rolls shut. A
+     * toggle that did not take is pressed again after this long.
+     */
+    const RETRY_MS = 260
+    /** Presses per row or control before giving up, reset once it reaches the wanted state. */
+    const MAX_ATTEMPTS = 5
     const listeners = new Set()
     let userCollapsed = new WeakSet()
     /** Group and turn controls the user closed by hand since the last bulk action. */
     let userClosed = new WeakSet()
     /** Group and turn controls this plugin opened, closed again by the off switch. */
     let autoOpened = new Set()
-    let suppressingClick = false
+    /** Rows and controls the off switch still has to close. */
+    let pendingCollapse = new Set()
+    let pendingClose = new Set()
+    let attempts = new WeakMap()
+    let acting = false
+    let retryTimer = 0
+    let requestPass = () => {}
 
     function readEnabled() {
       try {
@@ -57,8 +71,13 @@ window.__ModuleLoader__.load({
       return control.getAttribute('aria-expanded') === 'true'
     }
 
+    /**
+     * Only real input counts as the reader's choice. Other plugins press the
+     * same controls with untrusted clicks: a skin folding a finished Think row,
+     * or replaying a click it held for its own animation.
+     */
     function rememberUserToggle(event) {
-      if (suppressingClick) return
+      if (acting || !event.isTrusted) return
       const target = event.target
       if (!(target instanceof Element)) return
       const row = target.closest(THINK_ROW)
@@ -66,6 +85,7 @@ window.__ModuleLoader__.load({
       const toggle = toggleOf(row)
       if (toggle === null) return
       if (!toggle.contains(target)) return
+      pendingCollapse.delete(row)
       if (isOpen(toggle)) {
         userCollapsed.add(row)
         return
@@ -75,12 +95,13 @@ window.__ModuleLoader__.load({
 
     /** Native buttons turn Enter and Space into clicks, so clicks cover the keyboard too. */
     function rememberUserFold(event) {
-      if (suppressingClick) return
+      if (acting || !event.isTrusted) return
       const target = event.target
       if (!(target instanceof Element)) return
       const turn = target.closest(TURN_PROCESS)
       const header = turn ?? stepHeaderAt(target)
       if (header === null) return
+      pendingClose.delete(header)
       if (isOpen(header)) {
         userClosed.add(header)
         return
@@ -132,6 +153,19 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * Toggle a Think row. Its header is a `role="button"` row whose own key
+     * handler toggles on Enter, so the keyboard path is used: skins that
+     * animate folds intercept clicks, and Enter reaches the host untouched.
+     */
+    function pressRow(toggle) {
+      if (toggle.getAttribute('role') === 'button' && toggle.tagName !== 'BUTTON') {
+        toggle.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+        return
+      }
+      toggle.click()
+    }
+
+    /**
      * Click a host control without letting it move focus. Group and turn
      * headers focus themselves on click, which would scroll the conversation.
      */
@@ -144,10 +178,28 @@ window.__ModuleLoader__.load({
       }
     }
 
+    /** Press once more unless this target has used up its attempts; re-check after the animation window. */
+    function attempt(target, press) {
+      const count = attempts.get(target) ?? 0
+      if (count >= MAX_ATTEMPTS) return false
+      attempts.set(target, count + 1)
+      press()
+      if (retryTimer === 0) {
+        retryTimer = setTimeout(() => {
+          retryTimer = 0
+          requestPass()
+        }, RETRY_MS)
+      }
+      return true
+    }
+
     function setEnabled(next) {
       // An explicit bulk action supersedes individual choices from before it.
       userCollapsed = new WeakSet()
       userClosed = new WeakSet()
+      attempts = new WeakMap()
+      pendingCollapse = new Set()
+      pendingClose = new Set()
       enabled = next
       try {
         localStorage.setItem(STORAGE_KEY, next ? '1' : '0')
@@ -162,6 +214,11 @@ window.__ModuleLoader__.load({
       collapseThinkRows()
     }
 
+    function runPass() {
+      if (enabled) syncThinkRows()
+      else settleCollapse()
+    }
+
     /**
      * Open visible Think rows that the user has not collapsed by hand, and
      * reveal the folded group or turn around each hidden one. Revealing
@@ -171,7 +228,7 @@ window.__ModuleLoader__.load({
     function syncThinkRows() {
       if (!enabled) return
       const revealers = new Set()
-      suppressingClick = true
+      acting = true
       try {
         for (const row of document.querySelectorAll(THINK_ROW)) {
           if (userCollapsed.has(row)) continue
@@ -182,16 +239,23 @@ window.__ModuleLoader__.load({
             continue
           }
           const toggle = toggleOf(row)
-          if (toggle === null || isOpen(toggle)) continue
-          toggle.click()
+          if (toggle === null) continue
+          if (isOpen(toggle)) {
+            attempts.delete(row)
+            continue
+          }
+          attempt(row, () => pressRow(toggle))
+        }
+        for (const control of autoOpened) {
+          if (!control.isConnected) autoOpened.delete(control)
+          else if (isOpen(control)) attempts.delete(control)
         }
         for (const revealer of revealers) {
           if (userClosed.has(revealer) || isOpen(revealer)) continue
-          autoOpened.add(revealer)
-          quietClick(revealer)
+          if (attempt(revealer, () => quietClick(revealer))) autoOpened.add(revealer)
         }
       } finally {
-        suppressingClick = false
+        acting = false
       }
     }
 
@@ -200,20 +264,38 @@ window.__ModuleLoader__.load({
      * turns this plugin opened. Used when the header switch turns off.
      */
     function collapseThinkRows() {
-      const opened = autoOpened
+      for (const row of document.querySelectorAll(THINK_ROW)) {
+        const toggle = toggleOf(row)
+        if (toggle !== null && isOpen(toggle)) pendingCollapse.add(row)
+      }
+      pendingClose = autoOpened
       autoOpened = new Set()
-      suppressingClick = true
+      settleCollapse()
+    }
+
+    /**
+     * Press whatever the off switch still has to close. Turns go first: a
+     * folding turn closes the groups inside it, and group headers are the
+     * clicks a skin may hold for its animation, so they wait for a later pass.
+     */
+    function settleCollapse() {
+      acting = true
       try {
-        for (const row of document.querySelectorAll(THINK_ROW)) {
+        for (const row of pendingCollapse) {
           const toggle = toggleOf(row)
-          if (toggle !== null && isOpen(toggle)) toggle.click()
+          if (!row.isConnected || toggle === null || !isOpen(toggle) || !attempt(row, () => pressRow(toggle))) {
+            pendingCollapse.delete(row)
+          }
         }
-        // Inner groups first, so a turn folds over groups that are already closed.
-        for (const control of [...opened].reverse()) {
-          if (control.isConnected && !control.disabled && isOpen(control)) quietClick(control)
+        for (const control of pendingClose) {
+          if (!control.isConnected || control.disabled || !isOpen(control)) pendingClose.delete(control)
+        }
+        const turns = [...pendingClose].filter(control => control.matches(TURN_PROCESS))
+        for (const control of turns.length > 0 ? turns : [...pendingClose]) {
+          if (!attempt(control, () => quietClick(control))) pendingClose.delete(control)
         }
       } finally {
-        suppressingClick = false
+        acting = false
       }
     }
 
@@ -258,9 +340,10 @@ window.__ModuleLoader__.load({
           if (frame !== 0) return
           frame = requestAnimationFrame(() => {
             frame = 0
-            syncThinkRows()
+            runPass()
           })
         }
+        requestPass = schedule
         const observer = new MutationObserver(schedule)
         observer.observe(document.documentElement, {
           subtree: true,
@@ -282,6 +365,9 @@ window.__ModuleLoader__.load({
           document.removeEventListener('click', onUserToggle, true)
           document.removeEventListener('keydown', onUserToggle, true)
           if (frame !== 0) cancelAnimationFrame(frame)
+          if (retryTimer !== 0) clearTimeout(retryTimer)
+          retryTimer = 0
+          requestPass = () => {}
         }
       })
 

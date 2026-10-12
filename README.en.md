@@ -6,7 +6,7 @@ DeepSeek Harness Web plugin. While the switch is on, every Think row in the conv
 
 ## Install
 
-Needs `dsh` 0.1.7-rc.2 or later and the `web` profile.
+Needs `dsh` 0.1.7-rc.2 or later and the `web` profile. Tested on the official 0.2.1-alpha.2 web UI, with the dsh-claude-style theme installed.
 
 ```sh
 dsh plugin --profile web add github:BrianHIO-x/dsh-think-expand
@@ -36,6 +36,8 @@ dsh plugin --profile web remove dsh-think-expand
 - A group or turn you close by hand stays closed until you use the header switch again.
 - Turning the switch off collapses every Think row and refolds the groups and turns the plugin opened. Groups and turns you opened yourself stay open.
 - Opening groups and turns never moves focus, so the conversation does not jump.
+- Only your own clicks and key presses count as manual choices. When another plugin opens or closes a row programmatically (for example a theme folding a Think row once reasoning ends), that is not recorded as your choice, and with the switch on the plugin opens the row again.
+- Works with themes that animate folds, such as dsh-claude-style. Those themes swallow chat clicks while an animation runs, so the plugin toggles Think rows with their own Enter key handler instead of a click, and retries a swallowed group or turn click after the animation, up to 5 times per control.
 - The switch is stored in the browser, so it survives a refresh.
 
 ## License

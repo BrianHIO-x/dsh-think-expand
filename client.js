@@ -43,6 +43,32 @@ window.__ModuleLoader__.load({
     /** A chat body can mount after its header; look for it this often, this many times. */
     const FIND_MS = 200
     const FIND_TRIES = 25
+    /**
+     * The reader's place is held after this pane opens or closes something,
+     * until it has not moved for HOLD_QUIET_MS: long reasoning keeps growing
+     * for seconds while its Markdown and code blocks render. Never longer than
+     * HOLD_MAX_MS, and real input from the reader ends it at once.
+     */
+    const HOLD_QUIET_MS = 600
+    const HOLD_MAX_MS = 15000
+    /** Each chat node and group carries one; their tops locate what the reader is looking at. */
+    const ANCHOR = '[data-chat-anchor-key]'
+    /** Marks the chat body of a pane whose switch is on. */
+    const PANE_ATTRIBUTE = 'data-dsh-think-expand'
+    const STYLE_ID = 'dsh-think-expand-style'
+    /**
+     * An open step group caps its body at min(400px, 50vh) with a scrollbar of
+     * its own. With every group open, the transcript turns into a stack of
+     * such boxes: the wheel scrolls inside whichever one is under the pointer
+     * and the page barely moves, so history loaded above by "Load earlier"
+     * seems never to arrive. While the switch is on, groups grow with their
+     * rows and the page scrolls as one.
+     */
+    const PANE_STYLE = `[${PANE_ATTRIBUTE}] [data-step-process] > [data-step-process-body] {
+  max-height: none;
+  overflow-y: visible;
+  scrollbar-gutter: auto;
+}`
 
     /**
      * Sessions whose switch is on in this window. Kept in memory only, so
@@ -55,6 +81,14 @@ window.__ModuleLoader__.load({
       localStorage.removeItem(LEGACY_STORAGE_KEY)
     } catch {
       // Private mode can refuse localStorage; nothing reads the key any more.
+    }
+
+    function ensureStyle() {
+      if (document.getElementById(STYLE_ID) !== null) return
+      const style = document.createElement('style')
+      style.id = STYLE_ID
+      style.textContent = PANE_STYLE
+      document.head.append(style)
     }
 
     function toggleOf(row) {
@@ -160,6 +194,14 @@ window.__ModuleLoader__.load({
       let acting = false
       let findTimer = 0
       let findTries = 0
+      /** The chat body this pane marked for uncapped groups. */
+      let marked = null
+      /** The reader's place, held for a moment while this pane's own changes settle. */
+      let hold = null
+      let holdFrame = 0
+      /** During a batch of changes: the chat body, and the place noted before the first change. */
+      let changing = null
+      let noted
 
       function contentIn(node) {
         for (const content of node.querySelectorAll(CONTENT)) {
@@ -186,6 +228,131 @@ window.__ModuleLoader__.load({
         return scope === null ? null : contentIn(scope)
       }
 
+      function mark(body) {
+        if (marked === body && body.hasAttribute(PANE_ATTRIBUTE)) return
+        unmark()
+        noteChange()
+        ensureStyle()
+        body.setAttribute(PANE_ATTRIBUTE, '')
+        marked = body
+      }
+
+      function unmark() {
+        if (marked !== null) {
+          noteChange()
+          marked.removeAttribute(PANE_ATTRIBUTE)
+        }
+        marked = null
+      }
+
+      /** The conversation's own scrollport inside this chat body. */
+      function scrollerOf(body) {
+        for (let node = body.querySelector('[data-chat-flow]'); node !== null && body.contains(node); node = node.parentElement) {
+          const overflow = getComputedStyle(node).overflowY
+          if ((overflow === 'auto' || overflow === 'scroll') && node.scrollHeight > node.clientHeight) return node
+        }
+        return null
+      }
+
+      /**
+       * The first chat node that starts inside the visible area, or the one
+       * spanning its top edge, with its offset from that edge. None while the
+       * reader follows the newest output: the host keeps that pinned itself.
+       */
+      function readerPlace(body) {
+        if (body.querySelector('[data-chat-following-tail]') !== null) return null
+        const scroller = scrollerOf(body)
+        if (scroller === null) return null
+        if (scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 2) return null
+        const top = scroller.getBoundingClientRect().top
+        let spanning = null
+        for (const element of body.querySelectorAll(ANCHOR)) {
+          const rect = element.getBoundingClientRect()
+          if (rect.height === 0) continue
+          if (rect.top >= top) return { scroller, element, offset: rect.top - top }
+          if (rect.bottom > top) spanning = { scroller, element, offset: rect.top - top }
+        }
+        return spanning
+      }
+
+      /** Record the reader's place before the first change of the current batch. */
+      function noteChange() {
+        if (changing === null || noted !== undefined) return
+        noted = hold ?? readerPlace(changing)
+      }
+
+      /**
+       * Run one batch of opening or closing in `body`, then keep the reader's
+       * place while it settles. Content this pane opens above the reader, such
+       * as a page of history that "Load earlier" just brought in, would
+       * otherwise push what they were reading out of view.
+       */
+      function changes(body, run) {
+        changing = body
+        noted = undefined
+        try {
+          run()
+        } finally {
+          const place = noted
+          changing = null
+          noted = undefined
+          if (place !== null && place !== undefined) holdPlace(place)
+        }
+      }
+
+      function onReaderMove(event) {
+        if (event.isTrusted) releasePlace()
+      }
+
+      function holdPlace(place) {
+        if (hold === null) {
+          for (const type of ['wheel', 'touchstart', 'pointerdown', 'keydown']) {
+            document.addEventListener(type, onReaderMove, { capture: true, passive: true })
+          }
+        }
+        const now = performance.now()
+        if (hold !== place) {
+          hold = place
+          hold.started = now
+        }
+        hold.moved = now
+        if (holdFrame === 0) holdFrame = requestAnimationFrame(keepPlace)
+      }
+
+      function keepPlace() {
+        holdFrame = 0
+        const place = hold
+        if (place === null) return
+        const { scroller, element, offset } = place
+        if (!scroller.isConnected || !element.isConnected || element.closest(HIDDEN) !== null) {
+          releasePlace()
+          return
+        }
+        const drift = element.getBoundingClientRect().top - scroller.getBoundingClientRect().top - offset
+        const now = performance.now()
+        if (Math.abs(drift) >= 1) {
+          scroller.scrollTo({ top: scroller.scrollTop + drift, behavior: 'instant' })
+          place.moved = now
+        }
+        if (now - place.moved >= HOLD_QUIET_MS || now - place.started >= HOLD_MAX_MS) {
+          releasePlace()
+          return
+        }
+        holdFrame = requestAnimationFrame(keepPlace)
+      }
+
+      /** Hand the scroll position back to the reader and the host. */
+      function releasePlace() {
+        if (hold !== null) {
+          for (const type of ['wheel', 'touchstart', 'pointerdown', 'keydown']) {
+            document.removeEventListener(type, onReaderMove, { capture: true })
+          }
+        }
+        hold = null
+        if (holdFrame !== 0) cancelAnimationFrame(holdFrame)
+        holdFrame = 0
+      }
+
       function schedule() {
         if (frame !== 0) return
         frame = requestAnimationFrame(() => {
@@ -199,6 +366,7 @@ window.__ModuleLoader__.load({
         const count = attempts.get(target) ?? 0
         if (count >= MAX_ATTEMPTS) return false
         attempts.set(target, count + 1)
+        noteChange()
         press()
         if (retryTimer === 0) {
           retryTimer = setTimeout(() => {
@@ -279,8 +447,14 @@ window.__ModuleLoader__.load({
       function pass() {
         const body = content()
         if (body !== null) {
-          if (enabled) openRows(body)
-          else settleCollapse()
+          changes(body, () => {
+            if (enabled) {
+              mark(body)
+              openRows(body)
+            } else {
+              settleCollapse()
+            }
+          })
         }
         if (!enabled && pendingCollapse.size === 0 && pendingClose.size === 0) unwatch()
       }
@@ -384,13 +558,17 @@ window.__ModuleLoader__.load({
         pendingClose = new Set()
         const body = content()
         if (!enabled && body !== null) {
-          for (const row of body.querySelectorAll(THINK_ROW)) {
-            const toggle = toggleOf(row)
-            if (row.closest(CONTENT) === body && toggle !== null && isOpen(toggle)) pendingCollapse.add(row)
-          }
+          changes(body, () => {
+            unmark()
+            for (const row of body.querySelectorAll(THINK_ROW)) {
+              const toggle = toggleOf(row)
+              if (row.closest(CONTENT) === body && toggle !== null && isOpen(toggle)) pendingCollapse.add(row)
+            }
+          })
           pendingClose = autoOpened
           autoOpened = new Set()
         }
+        if (!enabled) unmark()
         watch()
         pass()
       }
@@ -402,8 +580,16 @@ window.__ModuleLoader__.load({
 
       return {
         toggle,
-        /** Stop driving this pane. Rows keep their state; the session keeps its switch. */
-        dispose: unwatch,
+        /**
+         * Stop driving this pane. Rows keep their state and the session keeps
+         * its switch; the chat body is unmarked, since the pane may now show a
+         * session whose switch is off.
+         */
+        dispose() {
+          unwatch()
+          releasePlace()
+          unmark()
+        },
       }
     }
 

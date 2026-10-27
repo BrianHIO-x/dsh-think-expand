@@ -43,6 +43,8 @@ dsh plugin --profile web remove dsh-think-expand
 - A Think row, group, or turn you close by hand stays closed until you press the switch again.
 - Turning the switch off collapses every Think row in that session and refolds the groups and turns the plugin opened. Groups and turns you opened yourself stay open.
 - Opening groups and turns never moves focus, so the conversation does not jump.
+- With the switch on, step groups grow with their content and the conversation scrolls as one page. DSH caps an open group at 400 pixels with its own scrollbar; with every group open, the wheel kept landing in those boxes, the page barely moved when scrolling up, and history brought in by "Load earlier" never came into view. Sessions whose switch is off keep DSH's own look.
+- When the plugin opens or closes content, it keeps your place: content above you can grow or shrink and the line you were reading stays put. After "Load earlier" you stay where you were with the older content above, as in plain DSH. Any scroll, click, or key press of yours ends this at once, and while you follow the newest output DSH keeps that pinned itself.
 - Only your own clicks and key presses count as manual choices. When another plugin opens or closes a row programmatically (for example a theme folding a Think row once reasoning ends), that is not recorded as your choice, and with the switch on the plugin opens the row again.
 - Works with themes that animate folds, such as dsh-claude-style. Those themes swallow chat clicks while an animation runs, so the plugin toggles Think rows with their own Enter key handler instead of a click, and retries a swallowed group or turn click after the animation, up to 5 times per control.
 

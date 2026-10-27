@@ -8,7 +8,8 @@ const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
 
 // React renders the header switch for real, so it needs a DOM before it loads.
-const dom = new JSDOM('<!doctype html><body></body>', { url: 'http://localhost/', runScripts: 'outside-only', pretendToBeVisual: true })
+// The host caps an open step group's body with a scrollbar of its own.
+const dom = new JSDOM('<!doctype html><head><style>.capped { max-height: 400px; overflow-y: auto }</style></head><body></body>', { url: 'http://localhost/', runScripts: 'outside-only', pretendToBeVisual: true })
 const { window } = dom
 const { document } = window
 for (const name of ['window', 'document', 'navigator', 'HTMLElement', 'Element', 'Node', 'MutationObserver']) {
@@ -32,6 +33,7 @@ window.cancelAnimationFrame = () => {}
  */
 function setup() {
   document.body.replaceChildren()
+  document.getElementById('dsh-think-expand-style')?.remove()
   frames.length = 0
   let plugin, Header
   window.__ModuleLoader__ = { load({ factory }) {
@@ -91,7 +93,7 @@ function setup() {
     const root = el('div', { 'data-step-process': '' }, parent)
     const id = `:r${nextId++}:`
     const header = el('button', { type: 'button', 'aria-expanded': 'false', 'aria-controls': id }, el('div', {}, root))
-    const body = el('div', { id, 'data-step-process-body': '', hidden: 'until-found' }, root)
+    const body = el('div', { id, class: 'capped', 'data-step-process-body': '', hidden: 'until-found' }, root)
     const content = el('div', { 'data-step-process-content': '' }, body)
     const set = (open) => {
       header.setAttribute('aria-expanded', String(open))
@@ -103,8 +105,10 @@ function setup() {
       set(header.getAttribute('aria-expanded') !== 'true')
     })
     return {
-      root, header, content, set,
+      root, header, body, content, set,
       get open() { return header.getAttribute('aria-expanded') === 'true' },
+      /** The cap the reader sees: the host's 400px box, or none. */
+      get cap() { return window.getComputedStyle(body).maxHeight },
     }
   }
 
@@ -631,4 +635,44 @@ scenario('a session whose chat body mounts after its header still opens', async 
   await app.settle(400)
   assert.equal(chat.on, true)
   assert.equal(row.open, true)
+})
+
+scenario('while the switch is on, open step groups grow with their rows instead of scrolling inside', async (app) => {
+  const chat = app.pane('s1')
+  const grouped = chat.group()
+  chat.think(grouped.content)
+  const mine = chat.group()
+  mine.set(true)
+  await app.flush()
+  // Off: the host's capped box, untouched.
+  assert.equal(mine.cap, '400px')
+  await chat.press()
+  assert.equal(grouped.open, true)
+  assert.equal(grouped.cap, 'none')
+  assert.equal(window.getComputedStyle(grouped.body).overflowY, 'visible')
+  assert.equal(mine.cap, 'none')
+  await chat.press()
+  assert.equal(mine.open, true)
+  assert.equal(mine.cap, '400px')
+  // A pane showing another session drops the mark, and gets it back with its own switch.
+  await chat.press()
+  assert.equal(mine.cap, 'none')
+  await chat.show('s2')
+  assert.equal(chat.content.hasAttribute('data-dsh-think-expand'), false)
+  await chat.show('s1')
+  assert.equal(chat.content.hasAttribute('data-dsh-think-expand'), true)
+})
+
+scenario('the cap stays on panes whose switch is off', async (app) => {
+  const main = app.pane('s1')
+  const other = app.pane('s2')
+  const side = app.sidebar('child-1')
+  const otherGroup = other.group()
+  otherGroup.set(true)
+  const sideGroup = side.group()
+  sideGroup.set(true)
+  main.think()
+  await main.press()
+  assert.equal(otherGroup.cap, '400px')
+  assert.equal(sideGroup.cap, '400px')
 })

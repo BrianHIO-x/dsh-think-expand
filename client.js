@@ -28,7 +28,10 @@ window.__ModuleLoader__.load({
     /** Whole-turn fold control; `data-turn-process` holds the turn number. */
     const TURN_PROCESS = 'button[data-turn-process]'
     const TURN_OWNER = '[data-chat-turn]'
-    const STORAGE_KEY = 'dsh-think-expand.expandAll'
+    /** One session's chat body, tagged with `data-conversation-session`. */
+    const CONTENT = '[data-conversation-content]'
+    /** v0.1 kept one switch for every session and window here. */
+    const LEGACY_STORAGE_KEY = 'dsh-think-expand.expandAll'
     /**
      * Fold animations hold clicks for about 200 ms: skins such as
      * dsh-claude-style swallow every chat click while a fold rolls shut. A
@@ -37,31 +40,22 @@ window.__ModuleLoader__.load({
     const RETRY_MS = 260
     /** Presses per row or control before giving up, reset once it reaches the wanted state. */
     const MAX_ATTEMPTS = 5
-    const listeners = new Set()
-    let userCollapsed = new WeakSet()
-    /** Group and turn controls the user closed by hand since the last bulk action. */
-    let userClosed = new WeakSet()
-    /** Group and turn controls this plugin opened, closed again by the off switch. */
-    let autoOpened = new Set()
-    /** Rows and controls the off switch still has to close. */
-    let pendingCollapse = new Set()
-    let pendingClose = new Set()
-    let attempts = new WeakMap()
-    let acting = false
-    let retryTimer = 0
-    let requestPass = () => {}
+    /** A chat body can mount after its header; look for it this often, this many times. */
+    const FIND_MS = 200
+    const FIND_TRIES = 25
 
-    function readEnabled() {
-      try {
-        const raw = localStorage.getItem(STORAGE_KEY)
-        if (raw === null) return true
-        return raw === '1'
-      } catch {
-        return true
-      }
+    /**
+     * Sessions whose switch is on in this window. Kept in memory only, so
+     * another window, a reload, another session, or a subagent opened from
+     * here starts with the switch off and leaves Think rows to the reader.
+     */
+    const enabledSessions = new Set()
+
+    try {
+      localStorage.removeItem(LEGACY_STORAGE_KEY)
+    } catch {
+      // Private mode can refuse localStorage; nothing reads the key any more.
     }
-
-    let enabled = readEnabled()
 
     function toggleOf(row) {
       return row.querySelector(THINK_TOGGLE) ?? row.querySelector('[aria-expanded]')
@@ -69,52 +63,6 @@ window.__ModuleLoader__.load({
 
     function isOpen(control) {
       return control.getAttribute('aria-expanded') === 'true'
-    }
-
-    /**
-     * Only real input counts as the reader's choice. Other plugins press the
-     * same controls with untrusted clicks: a skin folding a finished Think row,
-     * or replaying a click it held for its own animation.
-     */
-    function rememberUserToggle(event) {
-      if (acting || !event.isTrusted) return
-      const target = event.target
-      if (!(target instanceof Element)) return
-      const row = target.closest(THINK_ROW)
-      if (row === null) return
-      const toggle = toggleOf(row)
-      if (toggle === null) return
-      if (!toggle.contains(target)) return
-      pendingCollapse.delete(row)
-      if (isOpen(toggle)) {
-        userCollapsed.add(row)
-        return
-      }
-      userCollapsed.delete(row)
-    }
-
-    /** Native buttons turn Enter and Space into clicks, so clicks cover the keyboard too. */
-    function rememberUserFold(event) {
-      if (acting || !event.isTrusted) return
-      const target = event.target
-      if (!(target instanceof Element)) return
-      const turn = target.closest(TURN_PROCESS)
-      const header = turn ?? stepHeaderAt(target)
-      if (header === null) return
-      pendingClose.delete(header)
-      if (isOpen(header)) {
-        userClosed.add(header)
-        return
-      }
-      userClosed.delete(header)
-    }
-
-    function stepHeaderAt(target) {
-      const header = target.closest(STEP_HEADER)
-      if (header === null) return null
-      const group = header.closest(STEP_GROUP)
-      if (group === null) return null
-      return stepHeaderOf(group) === header ? header : null
     }
 
     function stepHeaderOf(group) {
@@ -126,30 +74,20 @@ window.__ModuleLoader__.load({
       return null
     }
 
-    function outermostHidden(row) {
+    function stepHeaderAt(target) {
+      const header = target.closest(STEP_HEADER)
+      if (header === null) return null
+      const group = header.closest(STEP_GROUP)
+      if (group === null) return null
+      return stepHeaderOf(group) === header ? header : null
+    }
+
+    function outermostHidden(row, content) {
       let outer = null
-      for (let node = row.closest(HIDDEN); node !== null; node = node.parentElement?.closest(HIDDEN) ?? null) {
+      for (let node = row.closest(HIDDEN); node !== null && content.contains(node); node = node.parentElement?.closest(HIDDEN) ?? null) {
         outer = node
       }
       return outer
-    }
-
-    /**
-     * The control that reveals one hidden subtree: the step group header for a
-     * folded group body, otherwise the fold button of the owning turn.
-     */
-    function revealerOf(hidden) {
-      if (hidden.matches(STEP_BODY)) {
-        const group = hidden.closest(STEP_GROUP)
-        return group === null ? null : stepHeaderOf(group)
-      }
-      const owner = hidden.closest(TURN_OWNER)
-      if (owner === null) return null
-      const turn = owner.getAttribute('data-chat-turn')
-      for (const button of document.querySelectorAll(TURN_PROCESS)) {
-        if (button.getAttribute('data-turn-process') === turn && !button.disabled && !isOpen(button)) return button
-      }
-      return null
     }
 
     /**
@@ -178,148 +116,325 @@ window.__ModuleLoader__.load({
       }
     }
 
-    /** Press once more unless this target has used up its attempts; re-check after the animation window. */
-    function attempt(target, press) {
-      const count = attempts.get(target) ?? 0
-      if (count >= MAX_ATTEMPTS) return false
-      attempts.set(target, count + 1)
-      press()
-      if (retryTimer === 0) {
-        retryTimer = setTimeout(() => {
-          retryTimer = 0
-          requestPass()
-        }, RETRY_MS)
+    /**
+     * Whether a batch of mutations can change what the switch has to do: a
+     * fold or reveal (`hidden`, `aria-expanded`), or a Think row arriving.
+     * Streaming text inside an answer or an open Think body is neither, so it
+     * no longer costs a pass every frame.
+     */
+    function relevant(records) {
+      for (const record of records) {
+        if (record.type === 'attributes') return true
+        for (const node of record.addedNodes) {
+          if (node.nodeType !== 1) continue
+          if (node.matches(THINK_ROW) || node.querySelector(THINK_ROW) !== null) return true
+        }
       }
-      return true
-    }
-
-    function setEnabled(next) {
-      // An explicit bulk action supersedes individual choices from before it.
-      userCollapsed = new WeakSet()
-      userClosed = new WeakSet()
-      attempts = new WeakMap()
-      pendingCollapse = new Set()
-      pendingClose = new Set()
-      enabled = next
-      try {
-        localStorage.setItem(STORAGE_KEY, next ? '1' : '0')
-      } catch {
-        // Private mode can refuse localStorage; the in-memory flag still works.
-      }
-      for (const listener of listeners) listener()
-      if (next) {
-        syncThinkRows()
-        return
-      }
-      collapseThinkRows()
-    }
-
-    function runPass() {
-      if (enabled) syncThinkRows()
-      else settleCollapse()
+      return false
     }
 
     /**
-     * Open visible Think rows that the user has not collapsed by hand, and
-     * reveal the folded group or turn around each hidden one. Revealing
-     * re-renders the host, and the next pass opens the rows it uncovered.
-     * A session remount creates new nodes, so those expand again.
+     * Drive the Think rows of one session pane: the chat body that shares an
+     * ancestor with this header button. Panes elsewhere, such as a subagent
+     * chat in the right Sidebar, are never touched. Nothing is observed while
+     * the switch is off, apart from finishing the collapse it asked for.
+     * @param button - this pane's header switch.
+     * @param sessionId - the session the header belongs to.
+     * @param onChange - hears the switch state.
      */
-    function syncThinkRows() {
-      if (!enabled) return
-      const revealers = new Set()
-      acting = true
-      try {
-        for (const row of document.querySelectorAll(THINK_ROW)) {
-          if (userCollapsed.has(row)) continue
-          const hidden = outermostHidden(row)
-          if (hidden !== null) {
-            const revealer = revealerOf(hidden)
-            if (revealer !== null) revealers.add(revealer)
-            continue
+    function createPane(button, sessionId, onChange) {
+      let enabled = enabledSessions.has(sessionId)
+      let root = null
+      let observer = null
+      let frame = 0
+      let retryTimer = 0
+      let userCollapsed = new WeakSet()
+      /** Group and turn controls the user closed by hand since the last switch press. */
+      let userClosed = new WeakSet()
+      /** Group and turn controls this pane opened, closed again by the off switch. */
+      let autoOpened = new Set()
+      /** Rows and controls the off switch still has to close. */
+      let pendingCollapse = new Set()
+      let pendingClose = new Set()
+      let attempts = new WeakMap()
+      let acting = false
+      let findTimer = 0
+      let findTries = 0
+
+      function contentIn(node) {
+        for (const content of node.querySelectorAll(CONTENT)) {
+          if (content.getAttribute('data-conversation-session') === sessionId) return content
+        }
+        return null
+      }
+
+      /** The nearest ancestor of the button that also holds this session's chat body. */
+      function findRoot() {
+        if (root !== null && root.isConnected && root.contains(button)) return root
+        root = null
+        for (let node = button.parentElement; node !== null; node = node.parentElement) {
+          if (contentIn(node) !== null) {
+            root = node
+            break
           }
-          const toggle = toggleOf(row)
-          if (toggle === null) continue
-          if (isOpen(toggle)) {
-            attempts.delete(row)
-            continue
+        }
+        return root
+      }
+
+      function content() {
+        const scope = findRoot()
+        return scope === null ? null : contentIn(scope)
+      }
+
+      function schedule() {
+        if (frame !== 0) return
+        frame = requestAnimationFrame(() => {
+          frame = 0
+          pass()
+        })
+      }
+
+      /** Press once more unless this target has used up its attempts; re-check after the animation window. */
+      function attempt(target, press) {
+        const count = attempts.get(target) ?? 0
+        if (count >= MAX_ATTEMPTS) return false
+        attempts.set(target, count + 1)
+        press()
+        if (retryTimer === 0) {
+          retryTimer = setTimeout(() => {
+            retryTimer = 0
+            schedule()
+          }, RETRY_MS)
+        }
+        return true
+      }
+
+      /**
+       * Only real input inside this pane counts as the reader's choice. Other
+       * plugins press the same controls with untrusted clicks: a skin folding
+       * a finished Think row, or replaying a click it held for its animation.
+       */
+      function onUserInput(event) {
+        if (acting || !event.isTrusted) return
+        if (event.type === 'keydown' && event.key !== 'Enter' && event.key !== ' ') return
+        const target = event.target
+        if (!(target instanceof Element) || root === null || !root.contains(target)) return
+        const row = target.closest(THINK_ROW)
+        const toggle = row === null ? null : toggleOf(row)
+        if (toggle !== null && toggle.contains(target)) {
+          pendingCollapse.delete(row)
+          if (isOpen(toggle)) userCollapsed.add(row)
+          else userCollapsed.delete(row)
+        }
+        // Native buttons turn Enter and Space into clicks, so clicks cover the keyboard too.
+        if (event.type !== 'click') return
+        const header = target.closest(TURN_PROCESS) ?? stepHeaderAt(target)
+        if (header === null) return
+        pendingClose.delete(header)
+        if (isOpen(header)) userClosed.add(header)
+        else userClosed.delete(header)
+      }
+
+      function watch() {
+        if (observer !== null) return
+        const scope = findRoot()
+        if (scope === null) {
+          if (findTimer === 0 && findTries < FIND_TRIES) {
+            findTries++
+            findTimer = setTimeout(() => {
+              findTimer = 0
+              watch()
+              if (observer !== null) schedule()
+            }, FIND_MS)
           }
-          attempt(row, () => pressRow(toggle))
+          return
         }
-        for (const control of autoOpened) {
-          if (!control.isConnected) autoOpened.delete(control)
-          else if (isOpen(control)) attempts.delete(control)
+        findTries = 0
+        observer = new MutationObserver((records) => {
+          if (relevant(records)) schedule()
+        })
+        observer.observe(scope, {
+          subtree: true,
+          childList: true,
+          attributes: true,
+          attributeFilter: ['hidden', 'aria-expanded'],
+        })
+        document.addEventListener('click', onUserInput, true)
+        document.addEventListener('keydown', onUserInput, true)
+      }
+
+      function unwatch() {
+        if (observer !== null) observer.disconnect()
+        observer = null
+        document.removeEventListener('click', onUserInput, true)
+        document.removeEventListener('keydown', onUserInput, true)
+        if (frame !== 0) cancelAnimationFrame(frame)
+        frame = 0
+        if (retryTimer !== 0) clearTimeout(retryTimer)
+        retryTimer = 0
+        if (findTimer !== 0) clearTimeout(findTimer)
+        findTimer = 0
+      }
+
+      function pass() {
+        const body = content()
+        if (body !== null) {
+          if (enabled) openRows(body)
+          else settleCollapse()
         }
-        for (const revealer of revealers) {
-          if (userClosed.has(revealer) || isOpen(revealer)) continue
-          if (attempt(revealer, () => quietClick(revealer))) autoOpened.add(revealer)
+        if (!enabled && pendingCollapse.size === 0 && pendingClose.size === 0) unwatch()
+      }
+
+      /**
+       * Open visible Think rows the user has not collapsed by hand, and
+       * reveal the folded group or turn around each hidden one. Revealing
+       * re-renders the host, and the next pass opens the rows it uncovered.
+       */
+      function openRows(body) {
+        let turns = null
+        const turnButton = (turn) => {
+          if (turns === null) {
+            turns = new Map()
+            for (const button of body.querySelectorAll(TURN_PROCESS)) {
+              const key = button.getAttribute('data-turn-process')
+              if (!turns.has(key)) turns.set(key, [])
+              turns.get(key).push(button)
+            }
+          }
+          return (turns.get(turn) ?? []).find(button => !button.disabled && !isOpen(button)) ?? null
         }
-      } finally {
-        acting = false
+        /** The step group header for a folded group body, otherwise the owning turn's fold button. */
+        const revealerOf = (hidden) => {
+          if (hidden.matches(STEP_BODY)) {
+            const group = hidden.closest(STEP_GROUP)
+            return group === null ? null : stepHeaderOf(group)
+          }
+          const owner = hidden.closest(TURN_OWNER)
+          return owner === null ? null : turnButton(owner.getAttribute('data-chat-turn'))
+        }
+        const revealers = new Set()
+        acting = true
+        try {
+          for (const row of body.querySelectorAll(THINK_ROW)) {
+            if (userCollapsed.has(row) || row.closest(CONTENT) !== body) continue
+            const hidden = outermostHidden(row, body)
+            if (hidden !== null) {
+              const revealer = revealerOf(hidden)
+              if (revealer !== null) revealers.add(revealer)
+              continue
+            }
+            const toggle = toggleOf(row)
+            if (toggle === null) continue
+            if (isOpen(toggle)) {
+              attempts.delete(row)
+              continue
+            }
+            attempt(row, () => pressRow(toggle))
+          }
+          for (const control of autoOpened) {
+            if (!control.isConnected) autoOpened.delete(control)
+            else if (isOpen(control)) attempts.delete(control)
+          }
+          for (const revealer of revealers) {
+            if (userClosed.has(revealer) || isOpen(revealer)) continue
+            if (attempt(revealer, () => quietClick(revealer))) autoOpened.add(revealer)
+          }
+        } finally {
+          acting = false
+        }
+      }
+
+      /**
+       * Press whatever the off switch still has to close. Turns go first: a
+       * folding turn closes the groups inside it, and group headers are the
+       * clicks a skin may hold for its animation, so they wait for a later pass.
+       */
+      function settleCollapse() {
+        acting = true
+        try {
+          for (const row of pendingCollapse) {
+            const toggle = toggleOf(row)
+            if (!row.isConnected || toggle === null || !isOpen(toggle) || !attempt(row, () => pressRow(toggle))) {
+              pendingCollapse.delete(row)
+            }
+          }
+          for (const control of pendingClose) {
+            if (!control.isConnected || control.disabled || !isOpen(control)) pendingClose.delete(control)
+          }
+          const turns = [...pendingClose].filter(control => control.matches(TURN_PROCESS))
+          for (const control of turns.length > 0 ? turns : [...pendingClose]) {
+            if (!attempt(control, () => quietClick(control))) pendingClose.delete(control)
+          }
+        } finally {
+          acting = false
+        }
+      }
+
+      /** The switch press: every Think row of this pane opens, or every one closes. */
+      function toggle() {
+        enabled = !enabled
+        if (enabled) enabledSessions.add(sessionId)
+        else enabledSessions.delete(sessionId)
+        onChange(enabled)
+        // An explicit switch press supersedes individual choices from before it.
+        userCollapsed = new WeakSet()
+        userClosed = new WeakSet()
+        attempts = new WeakMap()
+        pendingCollapse = new Set()
+        pendingClose = new Set()
+        const body = content()
+        if (!enabled && body !== null) {
+          for (const row of body.querySelectorAll(THINK_ROW)) {
+            const toggle = toggleOf(row)
+            if (row.closest(CONTENT) === body && toggle !== null && isOpen(toggle)) pendingCollapse.add(row)
+          }
+          pendingClose = autoOpened
+          autoOpened = new Set()
+        }
+        watch()
+        pass()
+      }
+
+      if (enabled) {
+        watch()
+        schedule()
+      }
+
+      return {
+        toggle,
+        /** Stop driving this pane. Rows keep their state; the session keeps its switch. */
+        dispose: unwatch,
       }
     }
 
-    /**
-     * Close every Think row, hidden ones included, then fold the groups and
-     * turns this plugin opened. Used when the header switch turns off.
-     */
-    function collapseThinkRows() {
-      for (const row of document.querySelectorAll(THINK_ROW)) {
-        const toggle = toggleOf(row)
-        if (toggle !== null && isOpen(toggle)) pendingCollapse.add(row)
-      }
-      pendingClose = autoOpened
-      autoOpened = new Set()
-      settleCollapse()
-    }
-
-    /**
-     * Press whatever the off switch still has to close. Turns go first: a
-     * folding turn closes the groups inside it, and group headers are the
-     * clicks a skin may hold for its animation, so they wait for a later pass.
-     */
-    function settleCollapse() {
-      acting = true
-      try {
-        for (const row of pendingCollapse) {
-          const toggle = toggleOf(row)
-          if (!row.isConnected || toggle === null || !isOpen(toggle) || !attempt(row, () => pressRow(toggle))) {
-            pendingCollapse.delete(row)
-          }
-        }
-        for (const control of pendingClose) {
-          if (!control.isConnected || control.disabled || !isOpen(control)) pendingClose.delete(control)
-        }
-        const turns = [...pendingClose].filter(control => control.matches(TURN_PROCESS))
-        for (const control of turns.length > 0 ? turns : [...pendingClose]) {
-          if (!attempt(control, () => quietClick(control))) pendingClose.delete(control)
-        }
-      } finally {
-        acting = false
-      }
-    }
-
-    function ExpandToggle() {
-      const [, bump] = React.useState(0)
+    function ExpandToggle({ sessionId }) {
+      const ref = React.useRef(null)
+      const pane = React.useRef(null)
+      const key = String(sessionId)
+      const [on, setOn] = React.useState(() => enabledSessions.has(key))
       React.useEffect(() => {
-        const onChange = () => bump((value) => value + 1)
-        listeners.add(onChange)
+        setOn(enabledSessions.has(key))
+        if (ref.current === null) return undefined
+        const controller = createPane(ref.current, key, setOn)
+        pane.current = controller
         return () => {
-          listeners.delete(onChange)
+          controller.dispose()
+          if (pane.current === controller) pane.current = null
         }
-      }, [])
+      }, [key])
       return jsx('button', {
+        ref,
         type: 'button',
-        'aria-pressed': enabled,
-        title: enabled ? '收起全部 Think' : '展开全部 Think',
+        'aria-pressed': on,
+        title: on ? '收起本会话的全部 Think' : '展开本会话的全部 Think',
         onClick: () => {
-          setEnabled(!enabled)
+          pane.current?.toggle()
         },
         style: {
           cursor: 'pointer',
           border: 'none',
-          background: enabled ? '#2b6cff' : 'rgba(43, 108, 255, 0.18)',
-          color: enabled ? '#fff' : '#2b6cff',
+          background: on ? '#2b6cff' : 'rgba(43, 108, 255, 0.18)',
+          color: on ? '#fff' : '#2b6cff',
           borderRadius: '8px',
           height: '28px',
           padding: '0 10px',
@@ -334,53 +449,15 @@ window.__ModuleLoader__.load({
     const inject = ['slots']
 
     function apply(ctx) {
-      ctx.effect(() => {
-        let frame = 0
-        const schedule = () => {
-          if (frame !== 0) return
-          frame = requestAnimationFrame(() => {
-            frame = 0
-            runPass()
-          })
-        }
-        requestPass = schedule
-        const observer = new MutationObserver(schedule)
-        observer.observe(document.documentElement, {
-          subtree: true,
-          childList: true,
-          // Expanding a folded turn or step group only removes `hidden`.
-          attributes: true,
-          attributeFilter: ['hidden'],
-        })
-        const onUserToggle = (event) => {
-          if (event.type === 'keydown' && event.key !== 'Enter' && event.key !== ' ') return
-          rememberUserToggle(event)
-          if (event.type === 'click') rememberUserFold(event)
-        }
-        document.addEventListener('click', onUserToggle, true)
-        document.addEventListener('keydown', onUserToggle, true)
-        schedule()
-        return () => {
-          observer.disconnect()
-          document.removeEventListener('click', onUserToggle, true)
-          document.removeEventListener('keydown', onUserToggle, true)
-          if (frame !== 0) cancelAnimationFrame(frame)
-          if (retryTimer !== 0) clearTimeout(retryTimer)
-          retryTimer = 0
-          requestPass = () => {}
-        }
-      })
-
-      if (React !== undefined && jsx !== undefined) {
-        ctx.slots.inject('conversation.session.header.actions', () => ctx.slots.register(
-          {
-            name: 'conversation.session.header.actions',
-            id: 'think-expand',
-            order: 40,
-          },
-          ExpandToggle,
-        ))
-      }
+      if (React === undefined || jsx === undefined) return
+      ctx.slots.inject('conversation.session.header.actions', () => ctx.slots.register(
+        {
+          name: 'conversation.session.header.actions',
+          id: 'think-expand',
+          order: 40,
+        },
+        ExpandToggle,
+      ))
     }
 
     exports.apply = apply

@@ -1,10 +1,10 @@
 {
   "name": "dsh-think-expand",
-  "version": "0.1.4",
+  "version": "0.2.0",
   "scripts": {
     "test": "node --test"
   },
-  "description": "Auto-expand every Think row, opening the DSH 0.1.7 step groups and folded turns that hold them. Header switch to turn it on or off.",
+  "description": "Per-session Think switch: off by default, it opens or closes every Think row of one session in one window, including the step groups and folded turns that hold them.",
   "type": "module",
   "license": "MIT",
   "author": "BrianHIO-x",
@@ -56,6 +56,8 @@
     "@deepseek-ai/cordis": "^4.0.4 || ^4.0.5-alpha.0"
   },
   "devDependencies": {
-    "jsdom": "^26.1.0"
+    "jsdom": "^26.1.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
   }
 }

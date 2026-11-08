@@ -167,6 +167,267 @@ window.__ModuleLoader__.load({
       return false
     }
 
+    /** The chat node seat around each row; its key survives the row being rebuilt. */
+    const NODE_SEAT = '[data-chat-node-key]'
+    const SESSION = '[data-conversation-session]'
+    /** One keeper per window, so a reload of this module replaces the previous one. */
+    const KEEPER_SLOT = '__dshThinkExpandKeeper'
+
+    /**
+     * Keep every Think row the reader opened by hand open, with no switch and
+     * no setup. DSH and skins fold Think on their own schedule:
+     * - dsh-claude-style presses a row shut the moment its reasoning stops,
+     *   and presses a process group shut once its work ends;
+     * - DSH folds a finished turn and resets the Think rows inside it, and
+     *   rebuilds rows when a turn's steps move into a group, which mounts
+     *   them collapsed again.
+     * Presses from other code on a kept row, or on the group or turn around
+     * one, are stopped at the window before any document listener sees them,
+     * so a skin's fold animation never starts. Rows DSH collapses or rebuilds
+     * are opened again, and in the newest turn the group or turn that hides
+     * them is unfolded. The reader's own press closes a row and ends its keep;
+     * a group or turn the reader closes by hand stays closed.
+     */
+    function createKeeper() {
+      /** Kept rows by seat key, so a rebuilt row is kept too; rows outside a seat by element. */
+      const keptKeys = new Set()
+      const keptRows = new WeakSet()
+      let keptLoose = 0
+      const keys = new WeakMap()
+      /** Group and turn headers the reader closed by hand. */
+      const userClosed = new WeakSet()
+      let attempts = new WeakMap()
+      let self = 0
+      let observer = null
+      let frame = 0
+      let retryTimer = 0
+
+      function keyOf(row) {
+        const cached = keys.get(row)
+        if (cached !== undefined) return cached
+        const seat = row.closest(NODE_SEAT)
+        if (seat === null) return null
+        const siblings = [...seat.querySelectorAll(THINK_ROW)].filter(other => other.closest(NODE_SEAT) === seat)
+        const key = JSON.stringify([
+          row.closest(SESSION)?.getAttribute('data-conversation-session') ?? '',
+          seat.getAttribute('data-chat-node-key'),
+          seat.getAttribute('data-chat-group-part') ?? '',
+          siblings.indexOf(row),
+        ])
+        keys.set(row, key)
+        return key
+      }
+
+      function isKept(row) {
+        const key = keyOf(row)
+        return key === null ? keptRows.has(row) : keptKeys.has(key)
+      }
+
+      function active() {
+        return keptKeys.size > 0 || keptLoose > 0
+      }
+
+      function keep(row) {
+        const key = keyOf(row)
+        if (key !== null) keptKeys.add(key)
+        else if (!keptRows.has(row)) {
+          keptRows.add(row)
+          keptLoose++
+        }
+        attempts.delete(row)
+        watch()
+      }
+
+      function release(row) {
+        const key = keyOf(row)
+        if (key !== null) keptKeys.delete(key)
+        else if (keptRows.has(row)) {
+          keptRows.delete(row)
+          keptLoose--
+        }
+        if (!active()) unwatch()
+      }
+
+      /** Run presses of this plugin's own, which the keeper must neither stop nor read as the reader's. */
+      function asSelf(run) {
+        self++
+        try {
+          return run()
+        } finally {
+          self--
+        }
+      }
+
+      /** Rows of one turn: its members share `data-chat-turn` with the turn's fold button. */
+      function turnRows(button) {
+        const scope = button.closest(CONTENT) ?? document
+        const turn = JSON.stringify(button.getAttribute('data-turn-process') ?? '')
+        return scope.querySelectorAll(`[data-chat-turn=${turn}] ${THINK_ROW}`)
+      }
+
+      function holdsKept(header) {
+        const rows = header.matches(TURN_PROCESS) ? turnRows(header) : header.closest(STEP_GROUP)?.querySelectorAll(THINK_ROW) ?? []
+        for (const row of rows) if (isKept(row)) return true
+        return false
+      }
+
+      function block(event) {
+        event.stopImmediatePropagation()
+        event.preventDefault()
+      }
+
+      function onInput(event) {
+        if (self > 0) return
+        if (event.type === 'keydown' && event.key !== 'Enter' && event.key !== ' ') return
+        const target = event.target
+        if (!(target instanceof Element)) return
+        const row = target.closest(THINK_ROW)
+        const toggle = row === null ? null : toggleOf(row)
+        if (toggle !== null && toggle.contains(target)) {
+          // Listeners on the window run before the host toggles: the state read here is the one being left.
+          if (event.isTrusted) {
+            if (isOpen(toggle)) release(row)
+            else keep(row)
+          } else if (isOpen(toggle) && isKept(row)) {
+            block(event)
+          }
+          return
+        }
+        // Native buttons turn Enter and Space into clicks, so clicks cover the keyboard too.
+        if (event.type !== 'click') return
+        const header = target.closest(TURN_PROCESS) ?? stepHeaderAt(target)
+        if (header === null) return
+        if (event.isTrusted) {
+          if (isOpen(header)) userClosed.add(header)
+          else userClosed.delete(header)
+        } else if (active() && isOpen(header) && holdsKept(header)) {
+          block(event)
+        }
+      }
+
+      function schedule() {
+        if (frame !== 0) return
+        frame = requestAnimationFrame(() => {
+          frame = 0
+          pass()
+        })
+      }
+
+      function attempt(target, press) {
+        const count = attempts.get(target) ?? 0
+        if (count >= MAX_ATTEMPTS) return
+        attempts.set(target, count + 1)
+        press()
+        if (retryTimer === 0) {
+          retryTimer = setTimeout(() => {
+            retryTimer = 0
+            schedule()
+          }, RETRY_MS)
+        }
+      }
+
+      /** The last turn in a chat body: the one running now, or the one that just finished. */
+      function newestTurn(scope, cache) {
+        if (!cache.has(scope)) {
+          const turns = scope.querySelectorAll('[data-chat-turn]')
+          cache.set(scope, turns.length === 0 ? null : turns[turns.length - 1].getAttribute('data-chat-turn'))
+        }
+        return cache.get(scope)
+      }
+
+      /** The control that unfolds `hidden`, when it belongs to the newest turn. */
+      function revealerOf(hidden, scope, cache) {
+        const newest = newestTurn(scope, cache)
+        if (hidden.matches(STEP_BODY)) {
+          const group = hidden.closest(STEP_GROUP)
+          const turn = group?.closest('[data-chat-turn]')?.getAttribute('data-chat-turn')
+          if (group === null || (turn !== undefined && turn !== newest)) return null
+          return stepHeaderOf(group)
+        }
+        const turn = hidden.closest(TURN_OWNER)?.getAttribute('data-chat-turn')
+        if (turn === undefined || turn !== newest) return null
+        for (const button of scope.querySelectorAll(TURN_PROCESS)) {
+          if (button.getAttribute('data-turn-process') === turn) return button
+        }
+        return null
+      }
+
+      function pass() {
+        if (!active()) return
+        const revealers = new Set()
+        const cache = new Map()
+        asSelf(() => {
+          for (const row of document.querySelectorAll(THINK_ROW)) {
+            if (!isKept(row)) continue
+            const toggle = toggleOf(row)
+            if (toggle === null) continue
+            const scope = row.closest(CONTENT) ?? document.body
+            const hidden = outermostHidden(row, scope)
+            if (hidden !== null) {
+              const revealer = revealerOf(hidden, scope, cache)
+              if (revealer !== null) revealers.add(revealer)
+              continue
+            }
+            if (isOpen(toggle)) attempts.delete(row)
+            else attempt(row, () => pressRow(toggle))
+          }
+          for (const revealer of revealers) {
+            if (isOpen(revealer)) attempts.delete(revealer)
+            else if (!userClosed.has(revealer) && !revealer.disabled) attempt(revealer, () => quietClick(revealer))
+          }
+        })
+      }
+
+      function watch() {
+        if (observer !== null) return
+        observer = new MutationObserver((records) => {
+          if (relevant(records)) schedule()
+        })
+        observer.observe(document.body, {
+          subtree: true,
+          childList: true,
+          attributes: true,
+          attributeFilter: ['hidden', 'aria-expanded'],
+        })
+      }
+
+      function unwatch() {
+        if (observer !== null) observer.disconnect()
+        observer = null
+        if (frame !== 0) cancelAnimationFrame(frame)
+        frame = 0
+        if (retryTimer !== 0) clearTimeout(retryTimer)
+        retryTimer = 0
+      }
+
+      window.addEventListener('click', onInput, true)
+      window.addEventListener('keydown', onInput, true)
+
+      return {
+        asSelf,
+        /** A switch press decides for every row of its chat body again. */
+        releaseWithin(body) {
+          for (const row of body.querySelectorAll(THINK_ROW)) release(row)
+          attempts = new WeakMap()
+        },
+        stop() {
+          unwatch()
+          window.removeEventListener('click', onInput, true)
+          window.removeEventListener('keydown', onInput, true)
+        },
+      }
+    }
+
+    function startKeeper() {
+      if (typeof window === 'undefined' || typeof document === 'undefined') return null
+      window[KEEPER_SLOT]?.stop()
+      const keeper = createKeeper()
+      window[KEEPER_SLOT] = keeper
+      return keeper
+    }
+
+    let keeper = null
+
     /**
      * Drive the Think rows of one session pane: the chat body that shares an
      * ancestor with this header button. Panes elsewhere, such as a subagent
@@ -367,7 +628,8 @@ window.__ModuleLoader__.load({
         if (count >= MAX_ATTEMPTS) return false
         attempts.set(target, count + 1)
         noteChange()
-        press()
+        if (keeper === null) press()
+        else keeper.asSelf(press)
         if (retryTimer === 0) {
           retryTimer = setTimeout(() => {
             retryTimer = 0
@@ -558,6 +820,7 @@ window.__ModuleLoader__.load({
         pendingClose = new Set()
         const body = content()
         if (!enabled && body !== null) {
+          keeper?.releaseWithin(body)
           changes(body, () => {
             unmark()
             for (const row of body.querySelectorAll(THINK_ROW)) {
@@ -635,6 +898,8 @@ window.__ModuleLoader__.load({
     const inject = ['slots']
 
     function apply(ctx) {
+      // Keeping hand-opened Think rows open needs no switch, so it starts with the plugin.
+      keeper = startKeeper()
       if (React === undefined || jsx === undefined) return
       ctx.slots.inject('conversation.session.header.actions', () => ctx.slots.register(
         {

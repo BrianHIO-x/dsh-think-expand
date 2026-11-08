@@ -2,11 +2,14 @@
 
 [中文](README.md) | [英文](README.en.md)
 
-DeepSeek Harness Web plugin. By default it changes nothing and leaves every Think row to you. Press the `Think` switch in a session's header and only that session, in that window, opens or closes all of its Think rows. Since DSH 0.1.7, Think rows live inside step groups and folded turns, so with the switch on the plugin first opens the groups and turns that hold a Think row, then expands the Think rows inside. Tool cards, context injections, and compaction rows stay as they are.
+DeepSeek Harness Web plugin. It does two things:
+
+1. **Think rows you open by hand are no longer folded for you.** It works as soon as the plugin is installed, with no switch to press. DSH and the dsh-claude-style theme fold Think when the reasoning stops, when a process group's work ends, and when a turn finishes; the plugin keeps the rows you opened yourself open until you close them.
+2. **A `Think` switch per session.** Press `Think` in a session's header and only that session, in that window, opens or closes all of its Think rows. Since DSH 0.1.7, Think rows live inside step groups and folded turns, so with the switch on the plugin first opens the groups and turns that hold a Think row, then expands the Think rows inside. Tool cards, context injections, and compaction rows stay as they are.
 
 ## Install
 
-Needs `dsh` 0.1.7-rc.2 or later and the `web` profile. Tested on the official 0.2.1-rc.4 web UI, with the dsh-claude-style 0.19.5 theme installed.
+Needs `dsh` 0.1.7-rc.2 or later and the `web` profile. This version is adapted to the published code of the official 0.2.2-rc.1 web UI and the dsh-claude-style 0.20.1 theme (that theme needs dsh 0.2.2-rc.1 or later); the switch was tested by hand on 0.2.1-rc.4 with dsh-claude-style 0.19.5.
 
 ```sh
 dsh plugin --profile web add github:BrianHIO-x/dsh-think-expand
@@ -28,11 +31,23 @@ dsh plugin --profile web remove dsh-think-expand
 
 ## Behavior
 
+### Think rows you open stay open (on by default)
+
+- Nothing to set up. It starts with the plugin, with the switch off as well.
+- A Think row you open yourself (mouse, Enter or Space) is remembered, and these automatic folds are stopped or undone:
+  - dsh-claude-style folds a Think row when its reasoning stops, and folds a process group when its work ends or a newer group appears in the same turn. The plugin stops those programmatic clicks at the window, before the theme sees them, so its fold animation never starts and nothing flickers.
+  - DSH folds a turn when it finishes (the "took X min X s" row) and resets the Think rows inside. For the newest turn the plugin unfolds it again and reopens the rows you opened. An older turn folding is left alone; once you unfold it yourself, the rows you opened in it are open again.
+  - DSH rebuilds Think rows when a turn's steps move into a group, and rebuilt rows start collapsed. The plugin recognizes the row by session, message and position and opens it again.
+- Closing the row yourself ends this. A group or turn you close by hand stays closed.
+- This memory lives in this window only; a reload or a new window starts afresh.
+- Turning a session's `Think` switch off clears this memory for that session, and the switch closes every row as before.
+- Until you open a Think row by hand, the plugin observes nothing; after that it checks only when a Think row appears or something folds or unfolds, never on streamed text.
+
 ### What the switch covers
 
-- The switch starts off. While it is off the plugin watches nothing and touches no Think row; you open and close them by hand, as in plain DSH.
+- The switch starts off. While it is off the plugin opens no Think row for you; you open and close them by hand, and the rows you open stay open as described above.
 - Each session has its own switch, and it acts only on that session in this window's main area. Turning it on for one session leaves every other session off.
-- Subagents work the same way: a subagent session opened in the main area starts with its switch off and can be turned on on its own. A subagent chat opened in the right Sidebar has no header and so no switch; the plugin leaves it alone, and its Think rows stay under your control.
+- Subagents work the same way: a subagent session opened in the main area starts with its switch off and can be turned on on its own. A subagent chat opened in the right Sidebar has no header and so no switch; the switch never touches it, though rows you open there by hand stay open too.
 - Switch states live in this window's memory only. Leave a session and come back and its switch is as you left it; a new window or a reload starts every session off. The old browser-wide switch from earlier versions is removed.
 
 ### With the switch on
@@ -50,7 +65,7 @@ dsh plugin --profile web remove dsh-think-expand
 
 ### Performance
 
-- A session whose switch is off costs nothing.
+- A session whose switch is off costs only the small amount of work keeping your opened rows open needs.
 - With the switch on, the plugin observes that one session's chat area. Streaming answer text and reasoning being written do not trigger a scan; the plugin checks again only when a new Think row appears or a group, turn, or Think row folds or unfolds.
 
 ## License

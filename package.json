@@ -2,7 +2,13 @@
   "name": "dsh-think-expand",
   "version": "0.3.0",
   "scripts": {
-    "test": "node --test"
+    "test": "node --test",
+    "check:syntax": "node --check index.js && node --check client.js && node --check scripts/check-package.mjs",
+    "check:package": "node scripts/check-package.mjs",
+    "check": "npm run check:syntax && npm test && npm run check:package",
+    "check:release": "npm run check:syntax && npm test && node scripts/check-package.mjs --strict",
+    "release:prepare": "npm run check:syntax && npm test && node scripts/check-package.mjs --release",
+    "prepublishOnly": "npm run check:release"
   },
   "description": "Keeps the Think rows you open by hand open when DSH or dsh-claude-style folds them, with no setup, plus a per-session switch that opens or closes every Think row of one session.",
   "type": "module",
@@ -39,8 +45,17 @@
     "cordis.patch.yml",
     "README.md",
     "README.en.md",
-    "LICENSE"
+    "PUBLISHING.md",
+    "LICENSE",
+    "docs/demo.svg",
+    "docs/demo.png",
+    "docs/demo.gif",
+    "screenshots.json"
   ],
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
@@ -51,9 +66,6 @@
         "@deepseek-ai/dsh-client-ui-conversation"
       ]
     }
-  },
-  "peerDependencies": {
-    "@deepseek-ai/cordis": "^4.0.4 || ^4.0.5-alpha.0"
   },
   "devDependencies": {
     "jsdom": "^26.1.0",

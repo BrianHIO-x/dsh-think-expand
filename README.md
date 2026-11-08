@@ -7,21 +7,49 @@ DeepSeek Harness 的 Web 插件，做两件事：
 1. **你手动点开的 Think 不会再被自动收起。** 装上就生效，不用点插件、不用开开关。DSH 和 dsh-claude-style 主题会在思考结束、过程组结束、轮次结束时把 Think 收起来，插件会让你亲手点开的那几行一直开着，直到你自己再点一下把它收起。
 2. **每个会话一个 `Think` 开关。** 在会话标题栏点 `Think`，只有这个窗口里的这个会话会展开或收起全部 Think。DSH 0.1.7 起把 Think 收进了步骤分组（例如「执行了命令」「已完成分析」）和折叠的轮次里，开关打开时插件会先打开装有 Think 的分组和轮次，再展开其中的 Think。工具卡片、上下文注入、压缩行不会被打开。
 
-## 安装
+## 预览
+
+![Think 开关位置与展开行为示意](docs/demo.gif)
+
+*功能示意，使用合成内容。动画先展示手动点开的 Think 保持展开，再展示点击会话标题栏的 `Think` 后批量展开思考；工具卡保留折叠。真实界面随 DSH 版本和主题变化。*
+
+[查看静态图](docs/demo.png)
+
+## 安装与第一次使用
 
 需要 `dsh` 0.1.7-rc.2 或更新版本，以及 `web` 配置。当前版本按官方 0.2.2-rc.1 网页端和 dsh-claude-style 0.20.1 主题的发布代码适配（这一版主题要求 dsh 0.2.2-rc.1 或更新）；开关部分曾在 0.2.1-rc.4 加 dsh-claude-style 0.19.5 上实测。
+
+### 从 GitHub 安装
 
 ```sh
 dsh plugin --profile web add github:BrianHIO-x/dsh-think-expand
 ```
 
-本地目录：
+安装到其他 profile 时，将命令中的 `web` 替换成实际运行网页端的 profile 名。
+
+### 开始使用
+
+1. 重启运行这个 profile 的 `dsh web`，再刷新网页。终端应出现 `[dsh-think-expand] plugin loaded!`。
+2. 打开任意会话，亲手点开一条 Think。插件默认会让这条思考保持展开，你自己收起后即停止保持。
+3. 要批量展开当前会话的全部思考，点击**会话标题栏的 `Think` 按钮**；再次点击会收起全部 Think。这个总开关默认关闭，与默认生效的“保持手动展开”分别工作。
+
+状态只保存在当前窗口的内存里，**刷新或新开窗口会重置**。切换会话后再回来，当前窗口内的状态仍保留。工具卡片不会跟着批量展开。
+
+### 其他安装方式
+
+[Releases](https://github.com/BrianHIO-x/dsh-think-expand/releases) 提供打包好的 `.tgz`，下载后可直接安装文件：
+
+```sh
+dsh plugin --profile web add /path/to/dsh-think-expand.tgz
+```
+
+本地开发目录也可直接安装：
 
 ```sh
 dsh plugin --profile web add /path/to/dsh-think-expand
 ```
 
-重新启动 `dsh web`。主机终端应出现 `[dsh-think-expand] plugin loaded!`。
+两种方式都在安装后重启对应网页端并刷新页面。
 
 DSH Go（手机 App）：插件在 App 的「网页版」和网页插件面板里照常生效。App 自己的原生聊天列表由 Flutter 绘制，思考行在回复结束时收起的逻辑写在 App 里，插件改不到；想让整轮不被收成一行摘要，可以在 App 设置里关掉「完成后收起过程」。
 
@@ -69,6 +97,22 @@ dsh plugin --profile web remove dsh-think-expand
 
 - 开关关闭的会话，插件只做上面「保持展开」需要的那一点工作。
 - 开关打开时，插件只观察这一个会话的对话区。流式输出的正文和正在写入的思考内容不会触发扫描，只有新的 Think 行出现、或者有分组、轮次、Think 行被折叠或展开时，插件才检查一次。
+
+## 常见问题
+
+- **安装后标题栏没有 Think 按钮：** 确认安装的 profile 与实际运行网页端的 profile 一致，重启后刷新网页。终端的 `plugin loaded!` 只说明宿主部分已加载；若按钮仍未出现，检查浏览器控制台中的模块加载错误。
+- **打开总开关前没有自动展开全部思考：** 默认行为是保持你亲手点开的行。批量展开需要点击会话标题栏的 `Think`。
+- **刷新后开关关闭了：** 开关和手动展开的记忆只保存在当前窗口内存中，刷新后重新开始。
+- **手机原生聊天列表里没变化：** 本插件作用于 DSH Web 的网页 DOM；手机原生界面的使用范围见上方说明。
+
+## 开发与发布
+
+```sh
+npm install --ignore-scripts
+npm run check
+```
+
+检查覆盖 JavaScript 语法、回归测试和实际打包内容。[发布说明](PUBLISHING.md) 记录 GitHub Release、npm 和社区目录的更新方式。演示图使用合成内容，原生页面的兼容性请按实际测试环境记录。
 
 ## 更新记录
 

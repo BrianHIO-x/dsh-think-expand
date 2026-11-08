@@ -7,21 +7,49 @@ DeepSeek Harness Web plugin. It does two things:
 1. **Think rows you open by hand are no longer folded for you.** It works as soon as the plugin is installed, with no switch to press. DSH and the dsh-claude-style theme fold Think when the reasoning stops, when a process group's work ends, and when a turn finishes; the plugin keeps the rows you opened yourself open until you close them.
 2. **A `Think` switch per session.** Press `Think` in a session's header and only that session, in that window, opens or closes all of its Think rows. Since DSH 0.1.7, Think rows live inside step groups and folded turns, so with the switch on the plugin first opens the groups and turns that hold a Think row, then expands the Think rows inside. Tool cards, context injections, and compaction rows stay as they are.
 
-## Install
+## Preview
+
+![Think switch location and expansion behavior](docs/demo.gif)
+
+*Illustrative demo with synthetic content. The animation first shows a manually opened Think row staying open, then expands the session's Think rows after pressing `Think` in the header. Tool cards stay collapsed. The real interface varies with the DSH version and theme.*
+
+[View the still image](docs/demo.png)
+
+## Install and first use
 
 Needs `dsh` 0.1.7-rc.2 or later and the `web` profile. This version is adapted to the published code of the official 0.2.2-rc.1 web UI and the dsh-claude-style 0.20.1 theme (that theme needs dsh 0.2.2-rc.1 or later); the switch was tested by hand on 0.2.1-rc.4 with dsh-claude-style 0.19.5.
+
+### Install from GitHub
 
 ```sh
 dsh plugin --profile web add github:BrianHIO-x/dsh-think-expand
 ```
 
-Local checkout:
+For another profile, replace `web` with the profile that runs your Web UI.
+
+### Start using it
+
+1. Restart `dsh web` for that profile, then reload the page. The terminal should print `[dsh-think-expand] plugin loaded!`.
+2. Open a session and expand a Think row yourself. The plugin keeps that row open by default; closing it yourself ends the keep.
+3. To expand every Think row in the current session, click **`Think` in the session header**. Click again to collapse them. This bulk switch starts off and works separately from keeping manually opened rows open.
+
+State lives in the current window only: **reloading or opening another window resets it**. Switching away from a session and back preserves it in that window. Tool cards stay as they are.
+
+### Other installation options
+
+[Releases](https://github.com/BrianHIO-x/dsh-think-expand/releases) provide a packaged `.tgz`. Download it and install the local file:
+
+```sh
+dsh plugin --profile web add /path/to/dsh-think-expand.tgz
+```
+
+You can also install a local development checkout:
 
 ```sh
 dsh plugin --profile web add /path/to/dsh-think-expand
 ```
 
-Restart `dsh web`. The host terminal should print `[dsh-think-expand] plugin loaded!`.
+After either installation, restart the matching Web UI and reload the page.
 
 DSH Go (the phone app): the plugin works in the app's web view and in web plugin panels. The app's own native chat list is drawn in Flutter, and folding a Think row when the reply ends is built into the app, so the plugin cannot change it there. To stop whole turns from folding into a one-line summary, turn off "Collapse steps when done" in the app's settings.
 
@@ -69,6 +97,22 @@ dsh plugin --profile web remove dsh-think-expand
 
 - A session whose switch is off costs only the small amount of work keeping your opened rows open needs.
 - With the switch on, the plugin observes that one session's chat area. Streaming answer text and reasoning being written do not trigger a scan; the plugin checks again only when a new Think row appears or a group, turn, or Think row folds or unfolds.
+
+## Troubleshooting
+
+- **No Think button after installation:** install into the same profile that runs the Web UI, restart it and reload the page. The host's `plugin loaded!` message confirms the host half only; if the button is still missing, check the browser console for module-loading errors.
+- **Not every row opens before the switch is pressed:** the default behavior keeps rows you opened yourself open. Use the session header's `Think` switch for bulk expansion.
+- **The switch is off after a reload:** switch states and manually opened-row memory live in this window only and reset on reload.
+- **No change in the phone's native chat list:** this plugin operates on the DSH Web DOM. See the phone-app note above for its scope.
+
+## Development and publishing
+
+```sh
+npm install --ignore-scripts
+npm run check
+```
+
+Checks cover JavaScript syntax, regression tests and the actual package contents. The [publishing guide](PUBLISHING.md) documents GitHub Releases, npm and the community catalog. Demo images contain synthetic content; record compatibility against the environment actually tested.
 
 ## Changelog
 

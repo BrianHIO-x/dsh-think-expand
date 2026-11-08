@@ -1,5 +1,23 @@
+# Installed dependencies
 node_modules/
+
+# Logs and OS metadata
 *.log
+npm-debug.log*
 .DS_Store
 Thumbs.db
+
+# No lockfile is committed for this small package; CI resolves the declared
+# devDependency ranges with `npm install --no-package-lock`.
 package-lock.json
+
+# Local package-check output (`npm pack`, stable tarball, checksums)
+artifacts/
+*.tgz
+
+# Isolated verification environments and local npm credentials
+.verification/
+.npmrc
+
+# Coverage output
+coverage/

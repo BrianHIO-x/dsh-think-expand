@@ -676,3 +676,217 @@ scenario('the cap stays on panes whose switch is off', async (app) => {
   assert.equal(otherGroup.cap, '400px')
   assert.equal(sideGroup.cap, '400px')
 })
+
+/** A chat node seat, as ChatNodeSeat wraps each node; its key outlives the rows inside. */
+function seat(parent, key, attrs = {}) {
+  const node = document.createElement('div')
+  node.setAttribute('data-chat-node-key', key)
+  for (const [name, value] of Object.entries(attrs)) node.setAttribute(name, value)
+  parent.append(node)
+  return node
+}
+
+/** Count the clicks that reach document listeners, where skins such as dsh-claude-style listen. */
+function reachDocument() {
+  const reached = []
+  const abort = new window.AbortController()
+  document.addEventListener('click', event => reached.push(event.target), { capture: true, signal: abort.signal })
+  return { reached, stop: () => abort.abort() }
+}
+
+scenario('a row opened by hand stays open when a skin folds it, with the switch off', async (app) => {
+  const chat = app.pane('s1')
+  const row = chat.think()
+  const untouched = chat.think()
+  await app.flush()
+  app.click(row.toggle)
+  await app.flush()
+  assert.equal(chat.on, false)
+  assert.equal(row.open, true)
+  const listen = reachDocument()
+  try {
+    // dsh-claude-style presses the row shut once its reasoning stops.
+    row.toggle.click()
+    untouched.toggle.click()
+    await app.settle(50)
+    assert.equal(row.open, true)
+    // The fold never reaches the skin, so its glide never starts.
+    assert.equal(listen.reached.includes(row.toggle), false)
+    // A row the reader did not open is left to the skin.
+    assert.equal(untouched.open, true)
+    untouched.toggle.click()
+    await app.flush()
+    assert.equal(untouched.open, false)
+  } finally {
+    listen.stop()
+  }
+})
+
+scenario('the reader closing a kept row ends the keep', async (app) => {
+  const chat = app.pane('s1')
+  const row = chat.think()
+  app.click(row.toggle)
+  await app.flush()
+  app.key(row.toggle)
+  await app.flush()
+  assert.equal(row.open, false)
+  // Opened by keyboard, closed by another plugin later: no longer kept.
+  app.key(row.toggle)
+  await app.flush()
+  assert.equal(row.open, true)
+  app.click(row.toggle)
+  await app.flush()
+  row.toggle.click()
+  await app.flush()
+  assert.equal(row.open, true)
+  app.click(row.toggle)
+  await app.flush()
+  assert.equal(row.open, false)
+  row.reset()
+  await app.settle(50)
+  assert.equal(row.open, false)
+})
+
+scenario('rows the host collapses or rebuilds are opened again', async (app) => {
+  const chat = app.pane('s1')
+  const node = seat(chat.content, 'step-1', { 'data-chat-turn': '1' })
+  const first = chat.think(node)
+  const second = chat.think(node)
+  app.click(second.toggle)
+  await app.flush()
+  // The host resets the row in place, then rebuilds the node when its steps move into a group.
+  second.reset()
+  await app.settle(50)
+  assert.equal(second.open, true)
+  node.remove()
+  const grouped = chat.group()
+  grouped.set(true)
+  const rebuilt = seat(grouped.content, 'step-1', { 'data-chat-turn': '1' })
+  const firstAgain = chat.think(rebuilt)
+  const secondAgain = chat.think(rebuilt)
+  await app.settle(50)
+  assert.equal(firstAgain.open, false)
+  assert.equal(secondAgain.open, true)
+  assert.equal(first.open, false)
+})
+
+scenario('a group holding a kept row is not folded by a skin, other groups are', async (app) => {
+  const chat = app.pane('s1')
+  const kept = chat.group()
+  const other = chat.group()
+  kept.set(true)
+  other.set(true)
+  const row = chat.think(kept.content)
+  chat.think(other.content)
+  app.click(row.toggle)
+  await app.flush()
+  kept.header.click()
+  other.header.click()
+  await app.settle(50)
+  assert.equal(kept.open, true)
+  assert.equal(row.open, true)
+  assert.equal(other.open, false)
+  // The reader can still close it, and it stays closed.
+  app.click(kept.header)
+  await app.settle(50)
+  assert.equal(kept.open, false)
+})
+
+scenario('the newest turn unfolds again when the host folds it over a kept row', async (app) => {
+  const chat = app.pane('s1')
+  const older = chat.turn(1, true)
+  const olderRow = older.think()
+  const newest = chat.turn(2, true)
+  const row = newest.think()
+  app.click(olderRow.toggle)
+  app.click(row.toggle)
+  await app.flush()
+  // The turn finishes and the host folds it, resetting its rows.
+  newest.set(false)
+  await app.settle(50)
+  assert.equal(newest.open, true)
+  assert.equal(row.open, true)
+  // An older turn folding is left folded; its row opens again once the reader unfolds it.
+  older.set(false)
+  await app.settle(50)
+  assert.equal(older.open, false)
+  app.click(older.button)
+  await app.settle(50)
+  assert.equal(older.open, true)
+  assert.equal(olderRow.open, true)
+  // A turn the reader folds by hand stays folded.
+  app.click(newest.button)
+  await app.settle(50)
+  assert.equal(newest.open, false)
+})
+
+scenario('nothing is observed until a row is opened by hand', async (app) => {
+  const chat = app.pane('s1')
+  const row = chat.think()
+  await app.flush()
+  chat.think()
+  await sleep(0)
+  assert.equal(frames.length, 0)
+  app.click(row.toggle)
+  await app.flush()
+  app.click(row.toggle)
+  await app.flush()
+  chat.think()
+  await sleep(0)
+  assert.equal(frames.length, 0)
+})
+
+scenario('the switch decides again for rows kept in its pane', async (app) => {
+  const chat = app.pane('s1')
+  const side = app.sidebar('child-1')
+  const row = chat.think()
+  const sideRow = side.think()
+  app.click(row.toggle)
+  app.click(sideRow.toggle)
+  await app.flush()
+  await chat.press()
+  await chat.press()
+  assert.equal(row.open, false)
+  row.reset()
+  await app.settle(50)
+  assert.equal(row.open, false)
+  // The Sidebar's row is still kept.
+  sideRow.toggle.click()
+  await app.flush()
+  assert.equal(sideRow.open, true)
+})
+
+scenario('reloading the plugin replaces the previous keeper', async (app) => {
+  const chat = app.pane('s1')
+  const row = chat.think()
+  app.click(row.toggle)
+  await app.flush()
+  const reloaded = setup()
+  try {
+    const fresh = reloaded.pane('s1')
+    const freshRow = fresh.think()
+    reloaded.click(freshRow.toggle)
+    reloaded.click(freshRow.toggle)
+    await reloaded.flush()
+    // Only the new keeper hears the reader: one closing press, nothing reopening it.
+    freshRow.reset()
+    await reloaded.settle(50)
+    assert.equal(freshRow.open, false)
+  } finally {
+    reloaded.cleanup()
+  }
+})
+
+scenario('turning the switch off also releases kept rows that are not mounted', async (app) => {
+  const chat = app.pane('s1')
+  const node = seat(chat.content, 'step-1')
+  const row = chat.think(node)
+  app.click(row.toggle)
+  await app.flush()
+  node.remove()
+  await chat.press()
+  await chat.press()
+  const again = chat.think(seat(chat.content, 'step-1'))
+  await app.settle(50)
+  assert.equal(again.open, false)
+})

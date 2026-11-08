@@ -1,10 +1,10 @@
 {
   "name": "dsh-think-expand",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "scripts": {
     "test": "node --test"
   },
-  "description": "Per-session Think switch: off by default, it opens or closes every Think row of one session in one window, including the step groups and folded turns that hold them.",
+  "description": "Keeps the Think rows you open by hand open when DSH or dsh-claude-style folds them, with no setup, plus a per-session switch that opens or closes every Think row of one session.",
   "type": "module",
   "license": "MIT",
   "author": "BrianHIO-x",

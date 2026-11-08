@@ -408,6 +408,12 @@ window.__ModuleLoader__.load({
         /** A switch press decides for every row of its chat body again. */
         releaseWithin(body) {
           for (const row of body.querySelectorAll(THINK_ROW)) release(row)
+          // Rows of this session that are not mounted right now are released too.
+          const session = body.getAttribute('data-conversation-session') ?? ''
+          for (const key of [...keptKeys]) {
+            if (JSON.parse(key)[0] === session) keptKeys.delete(key)
+          }
+          if (!active()) unwatch()
           attempts = new WeakMap()
         },
         stop() {

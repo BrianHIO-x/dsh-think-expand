@@ -876,3 +876,17 @@ scenario('reloading the plugin replaces the previous keeper', async (app) => {
     reloaded.cleanup()
   }
 })
+
+scenario('turning the switch off also releases kept rows that are not mounted', async (app) => {
+  const chat = app.pane('s1')
+  const node = seat(chat.content, 'step-1')
+  const row = chat.think(node)
+  app.click(row.toggle)
+  await app.flush()
+  node.remove()
+  await chat.press()
+  await chat.press()
+  const again = chat.think(seat(chat.content, 'step-1'))
+  await app.settle(50)
+  assert.equal(again.open, false)
+})

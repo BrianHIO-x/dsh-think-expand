@@ -1,6 +1,6 @@
 # dsh-think-expand
 
-[中文](README.md) | [英文](README.en.md)
+[![中文](https://img.shields.io/badge/%E4%B8%AD%E6%96%87-lightgrey?style=flat)](#dsh-think-expand) [![English](https://img.shields.io/badge/English-blue?style=flat)](README.en.md)
 
 DeepSeek Harness 的 Web 插件，做两件事：
 
@@ -22,6 +22,8 @@ dsh plugin --profile web add /path/to/dsh-think-expand
 ```
 
 重新启动 `dsh web`。主机终端应出现 `[dsh-think-expand] plugin loaded!`。
+
+DSH Go（手机 App）：插件在 App 的「网页版」和网页插件面板里照常生效。App 自己的原生聊天列表由 Flutter 绘制，思考行在回复结束时收起的逻辑写在 App 里，插件改不到；想让整轮不被收成一行摘要，可以在 App 设置里关掉「完成后收起过程」。
 
 卸载：
 
@@ -67,6 +69,14 @@ dsh plugin --profile web remove dsh-think-expand
 
 - 开关关闭的会话，插件只做上面「保持展开」需要的那一点工作。
 - 开关打开时，插件只观察这一个会话的对话区。流式输出的正文和正在写入的思考内容不会触发扫描，只有新的 Think 行出现、或者有分组、轮次、Think 行被折叠或展开时，插件才检查一次。
+
+## 更新记录
+
+- **0.3.0**：新增默认生效的「手动点开的 Think 保持展开」，不用点插件、不用开开关；专门适配 dsh-claude-style 0.20.1 的自动收起；按 DSH 0.2.2-rc.1 核对过页面结构。
+- **0.2.1**：开关打开时，步骤分组跟着内容变高，「加载更早」和滚轮恢复正常。
+- **0.2.0**：开关改为每个会话一个、默认关闭，只保存在当前窗口。
+- **0.1.2 至 0.1.4**：支持 DSH 0.1.7 的步骤分组和折叠轮次，兼容带折叠动画的主题。
+- **0.1.0 至 0.1.1**：标题栏 `Think` 开关，一键展开或收起全部 Think。
 
 ## 许可证
 

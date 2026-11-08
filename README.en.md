@@ -1,6 +1,6 @@
 # dsh-think-expand
 
-[中文](README.md) | [英文](README.en.md)
+[![中文](https://img.shields.io/badge/%E4%B8%AD%E6%96%87-blue?style=flat)](README.md) [![English](https://img.shields.io/badge/English-lightgrey?style=flat)](#dsh-think-expand)
 
 DeepSeek Harness Web plugin. It does two things:
 
@@ -22,6 +22,8 @@ dsh plugin --profile web add /path/to/dsh-think-expand
 ```
 
 Restart `dsh web`. The host terminal should print `[dsh-think-expand] plugin loaded!`.
+
+DSH Go (the phone app): the plugin works in the app's web view and in web plugin panels. The app's own native chat list is drawn in Flutter, and folding a Think row when the reply ends is built into the app, so the plugin cannot change it there. To stop whole turns from folding into a one-line summary, turn off "Collapse steps when done" in the app's settings.
 
 Uninstall:
 
@@ -67,6 +69,14 @@ dsh plugin --profile web remove dsh-think-expand
 
 - A session whose switch is off costs only the small amount of work keeping your opened rows open needs.
 - With the switch on, the plugin observes that one session's chat area. Streaming answer text and reasoning being written do not trigger a scan; the plugin checks again only when a new Think row appears or a group, turn, or Think row folds or unfolds.
+
+## Changelog
+
+- **0.3.0**: Think rows you open by hand stay open by default, with no switch to press. Adapted to dsh-claude-style 0.20.1's automatic folding, and checked against the DSH 0.2.2-rc.1 markup.
+- **0.2.1**: With the switch on, step groups grow with their content, so scrolling and "Load earlier" work again.
+- **0.2.0**: One switch per session, off by default and kept in this window only.
+- **0.1.2 to 0.1.4**: Support for DSH 0.1.7 step groups and folded turns, and for themes that animate folds.
+- **0.1.0 to 0.1.1**: The `Think` header switch that opens or closes every Think row at once.
 
 ## License
 

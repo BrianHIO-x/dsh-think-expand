@@ -32,7 +32,9 @@ npm publish --access public --registry=https://registry.npmjs.org
 
 密码、验证码与发布权限确认都在 npm 自己的界面完成。凭据不提交到仓库。若包名已被其他账号占用，先选择本人有权限的 scope，再同步包名、补丁的 `name` 与安装命令，重新执行检查。
 
-首次发布成功后，在两个 README 的安装部分增加 npm 命令：
+发布命令成功后，仍需核对 registry 中的正式版本、`latest` 和 `dist.integrity`，并从 registry 做一次独立安装。npm 有时会在后台处理期间暂时公开 `0.0.0-stage` 占位版本；先用 `npm stage list` 检查待批准队列。有待审项时按官方流程批准；队列为空时等待正式版本公开，再做安装验证。处理中的同一版本保留原包内容。
+
+npm 包地址为 [dsh-think-expand](https://www.npmjs.com/package/dsh-think-expand)，用户可以按包名安装：
 
 ```sh
 dsh plugin --profile web add dsh-think-expand

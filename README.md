@@ -19,6 +19,14 @@ DeepSeek Harness 的 Web 插件，做两件事：
 
 需要 `dsh` 0.1.7-rc.2 或更新版本，以及 `web` 配置。当前版本按官方 0.2.2-rc.1 网页端和 dsh-claude-style 0.20.1 主题的发布代码适配（这一版主题要求 dsh 0.2.2-rc.1 或更新）；开关部分曾在 0.2.1-rc.4 加 dsh-claude-style 0.19.5 上实测。
 
+### 从 npm 安装（推荐）
+
+```sh
+dsh plugin --profile web add dsh-think-expand
+```
+
+[npm 包与版本](https://www.npmjs.com/package/dsh-think-expand)。升级时重新运行同一条命令，随后重启对应网页端并刷新页面。
+
 ### 从 GitHub 安装
 
 ```sh

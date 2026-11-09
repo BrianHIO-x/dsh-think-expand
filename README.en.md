@@ -19,6 +19,14 @@ DeepSeek Harness Web plugin. It does two things:
 
 Needs `dsh` 0.1.7-rc.2 or later and the `web` profile. This version is adapted to the published code of the official 0.2.2-rc.1 web UI and the dsh-claude-style 0.20.1 theme (that theme needs dsh 0.2.2-rc.1 or later); the switch was tested by hand on 0.2.1-rc.4 with dsh-claude-style 0.19.5.
 
+### Install from npm (recommended)
+
+```sh
+dsh plugin --profile web add dsh-think-expand
+```
+
+[npm package and versions](https://www.npmjs.com/package/dsh-think-expand). To upgrade, run the same command again, then restart the matching Web UI and reload the page.
+
 ### Install from GitHub
 
 ```sh
